@@ -21,7 +21,7 @@
 int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("manage-server"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.4.0"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("0.5.0"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
