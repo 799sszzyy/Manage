@@ -188,6 +188,7 @@ QNetworkReply* ApiClient::me(Callback callback) {
                 session_.expiresAt = response.body
                                          .value(QStringLiteral("expiresAt"))
                                          .toString();
+                emit sessionChanged(true);
             }
             if (callback) {
                 callback(std::move(response));
@@ -213,6 +214,7 @@ QNetworkReply* ApiClient::changePassword(
                                       .toObject();
                 if (!user.isEmpty()) {
                     session_.user = user;
+                    emit sessionChanged(true);
                 }
             }
             if (callback) {
