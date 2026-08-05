@@ -8,12 +8,15 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
+class QListWidget;
 class QPushButton;
 class QTableWidget;
 
 namespace manage::desktop {
 
 class ApiClient;
+class BomItemsTable;
+class MaterialDragList;
 struct ApiResponse;
 
 class BomQuoteWidget final : public QWidget {
@@ -79,9 +82,10 @@ private:
     QLineEdit* bomDescriptionEdit_{};
     QLabel* bomRevisionLabel_{};
     QComboBox* bomMaterialCombo_{};
+    MaterialDragList* bomMaterialList_{};
     QPushButton* bomAddItemButton_{};
     QPushButton* bomRemoveItemButton_{};
-    QTableWidget* bomItemsTable_{};
+    BomItemsTable* bomItemsTable_{};
     QPushButton* bomSaveButton_{};
     QPushButton* bomReplaceItemsButton_{};
     QPushButton* bomToggleEnabledButton_{};
