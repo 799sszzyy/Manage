@@ -3,6 +3,7 @@ add_library(manage_server_lib STATIC
     src/bom_routes.cpp
     src/catalog_routes.cpp
     src/http_authorization.cpp
+    src/quote_routes.cpp
 )
 
 add_library(Manage::Server ALIAS manage_server_lib)
