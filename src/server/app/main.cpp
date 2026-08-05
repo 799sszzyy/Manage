@@ -1,6 +1,7 @@
 #include "manage/auth/auth_service.h"
 #include "manage/data/database_config.h"
 #include "manage/data/database_connection.h"
+#include "manage/data/catalog_repository.h"
 #include "manage/data/migration_runner.h"
 #include "manage/data/mysql_user_repository.h"
 #include "manage/server/api_server.h"
@@ -59,6 +60,7 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<manage::data::DatabaseConnection> databaseConnection;
     std::shared_ptr<manage::auth::AuthService> authService;
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository;
     if (!parser.isSet(smokeTestOption)) {
         databaseConnection = std::make_unique<manage::data::DatabaseConnection>(
             manage::data::DatabaseConfig::fromEnvironment()
@@ -95,9 +97,15 @@ int main(int argc, char* argv[]) {
         authService = std::make_shared<manage::auth::AuthService>(
             std::move(userRepository)
         );
+        catalogRepository = std::make_shared<manage::data::MySqlCatalogRepository>(
+            databaseConnection->database()
+        );
     }
 
-    manage::server::ApiServer server(std::move(authService));
+    manage::server::ApiServer server(
+        std::move(authService),
+        std::move(catalogRepository)
+    );
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)
                                    : static_cast<quint16>(parsedPort);
