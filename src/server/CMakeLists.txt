@@ -6,6 +6,7 @@ add_library(manage_server_lib STATIC
     src/material_batch_routes.cpp
     src/quote_routes.cpp
     src/user_routes.cpp
+    src/statistics_routes.cpp
 )
 
 add_library(Manage::Server ALIAS manage_server_lib)

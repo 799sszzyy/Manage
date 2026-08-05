@@ -19,6 +19,8 @@ class BomService;
 class CatalogRepository;
 class CatalogService;
 class QuoteLifecycle;
+class StatisticsRepository;
+class MaterialBatchService;
 }
 
 namespace manage::server {
@@ -52,6 +54,22 @@ public:
         manage::data::BomService* bomService,
         manage::data::QuoteLifecycle* quoteLifecycle,
         std::shared_ptr<manage::auth::UserManagementService> userManagementService
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService,
+        manage::data::QuoteLifecycle* quoteLifecycle,
+        manage::data::StatisticsRepository* statisticsRepository
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService,
+        manage::data::QuoteLifecycle* quoteLifecycle,
+        std::shared_ptr<manage::auth::UserManagementService> userManagementService,
+        manage::data::StatisticsRepository* statisticsRepository,
+        manage::data::MaterialBatchService* materialBatchService
     );
 
     quint16 listen(
