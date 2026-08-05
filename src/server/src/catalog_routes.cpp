@@ -1,5 +1,7 @@
 #include "manage/server/catalog_routes.h"
 
+#include "manage/server/http_authorization.h"
+
 #include "manage/data/catalog_service.h"
 
 #include <QHttpServer>
@@ -18,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace manage::server {
 namespace {
@@ -319,12 +322,24 @@ std::optional<std::uint32_t> revision(
 
 void registerCatalogRoutes(
     QHttpServer& server,
-    const std::shared_ptr<manage::data::CatalogService>& service
+    const std::shared_ptr<manage::data::CatalogService>& service,
+    const std::shared_ptr<manage::auth::AuthService>& authService
 ) {
     server.route(
         QStringLiteral("/api/v1/materials"),
         QHttpServerRequest::Method::Get,
-        [service](const QHttpServerRequest& request) {
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto query = pageQuery(request, true, &failure);
             if (!query.has_value()) {
@@ -336,7 +351,21 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/materials/<arg>"),
         QHttpServerRequest::Method::Get,
-        [service](qint64 id) {
+        [service, authService](
+            qint64 id,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
             const auto result = service->getMaterial(id);
             return result.ok() ? QHttpServerResponse(materialJson(*result.value))
                                : errorResponse(*result.error);
@@ -345,7 +374,14 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/materials"),
         QHttpServerRequest::Method::Post,
-        [service](const QHttpServerRequest& request) {
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto object = requestObject(request, &failure);
             if (!object.has_value()) {
@@ -364,7 +400,14 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/materials/<arg>"),
         QHttpServerRequest::Method::Put,
-        [service](qint64 id, const QHttpServerRequest& request) {
+        [service, authService](qint64 id, const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto object = requestObject(request, &failure);
             if (!object.has_value()) {
@@ -383,7 +426,14 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/materials/<arg>/enabled"),
         QHttpServerRequest::Method::Patch,
-        [service](qint64 id, const QHttpServerRequest& request) {
+        [service, authService](qint64 id, const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto object = requestObject(request, &failure);
             if (!object.has_value()) {
@@ -406,7 +456,18 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/customers"),
         QHttpServerRequest::Method::Get,
-        [service](const QHttpServerRequest& request) {
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto query = pageQuery(request, false, &failure);
             if (!query.has_value()) {
@@ -418,7 +479,21 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/customers/<arg>"),
         QHttpServerRequest::Method::Get,
-        [service](qint64 id) {
+        [service, authService](
+            qint64 id,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
             const auto result = service->getCustomer(id);
             return result.ok() ? QHttpServerResponse(customerJson(*result.value))
                                : errorResponse(*result.error);
@@ -427,7 +502,14 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/customers"),
         QHttpServerRequest::Method::Post,
-        [service](const QHttpServerRequest& request) {
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto object = requestObject(request, &failure);
             if (!object.has_value()) {
@@ -446,7 +528,14 @@ void registerCatalogRoutes(
     server.route(
         QStringLiteral("/api/v1/customers/<arg>"),
         QHttpServerRequest::Method::Put,
-        [service](qint64 id, const QHttpServerRequest& request) {
+        [service, authService](qint64 id, const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             QHttpServerResponse failure(StatusCode::BadRequest);
             const auto object = requestObject(request, &failure);
             if (!object.has_value()) {
