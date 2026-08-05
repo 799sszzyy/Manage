@@ -1,5 +1,7 @@
 #include "manage/server/bom_routes.h"
 
+#include "manage/server/http_authorization.h"
+
 #include "manage/data/bom_service.h"
 
 #include <QHttpServer>
@@ -14,7 +16,9 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace manage::server {
@@ -429,45 +433,101 @@ QHttpServerResponse replaceBomItems(
 
 void BomRoutes::registerRoutes(
     QHttpServer& server,
-    manage::data::BomService* service
+    manage::data::BomService* service,
+    const std::shared_ptr<manage::auth::AuthService>& authService
 ) {
     server.route(
         QStringLiteral("/api/v1/boms"),
         QHttpServerRequest::Method::Get,
-        [service](const QHttpServerRequest& request) {
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
             return listBoms(service, request);
         }
     );
     server.route(
         QStringLiteral("/api/v1/boms"),
         QHttpServerRequest::Method::Post,
-        [service](const QHttpServerRequest& request) {
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             return createBom(service, request);
         }
     );
     server.route(
         QStringLiteral("/api/v1/boms/<arg>/items"),
         QHttpServerRequest::Method::Put,
-        [service](qint64 id, const QHttpServerRequest& request) {
+        [service, authService](qint64 id, const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             return replaceBomItems(service, id, request);
         }
     );
     server.route(
         QStringLiteral("/api/v1/boms/<arg>/enabled"),
         QHttpServerRequest::Method::Patch,
-        [service](qint64 id, const QHttpServerRequest& request) {
+        [service, authService](qint64 id, const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             return setBomEnabled(service, id, request);
         }
     );
     server.route(
         QStringLiteral("/api/v1/boms/<arg>"),
         QHttpServerRequest::Method::Get,
-        [service](qint64 id) { return getBom(service, id); }
+        [service, authService](
+            qint64 id,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
+            return getBom(service, id);
+        }
     );
     server.route(
         QStringLiteral("/api/v1/boms/<arg>"),
         QHttpServerRequest::Method::Put,
-        [service](qint64 id, const QHttpServerRequest& request) {
+        [service, authService](qint64 id, const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
             return updateBom(service, id, request);
         }
     );
