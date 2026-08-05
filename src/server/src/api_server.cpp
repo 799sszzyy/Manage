@@ -5,6 +5,7 @@
 #include "manage/server/catalog_routes.h"
 #include "manage/server/http_authorization.h"
 #include "manage/server/quote_routes.h"
+#include "manage/server/statistics_routes.h"
 
 #include "manage/data/catalog_repository.h"
 #include "manage/data/catalog_service.h"
@@ -132,14 +133,14 @@ QString domainErrorCode(manage::domain::QuoteCalculationErrorCode code) {
 
 } // namespace
 
-ApiServer::ApiServer() : ApiServer(nullptr, nullptr, nullptr, nullptr) {}
+ApiServer::ApiServer() : ApiServer(nullptr, nullptr, nullptr, nullptr, nullptr) {}
 
 ApiServer::ApiServer(std::shared_ptr<manage::auth::AuthService> authService)
-    : ApiServer(std::move(authService), nullptr, nullptr, nullptr) {}
+    : ApiServer(std::move(authService), nullptr, nullptr, nullptr, nullptr) {}
 
 ApiServer::ApiServer(
     std::shared_ptr<manage::data::CatalogRepository> catalogRepository
-) : ApiServer(nullptr, std::move(catalogRepository), nullptr, nullptr) {}
+) : ApiServer(nullptr, std::move(catalogRepository), nullptr, nullptr, nullptr) {}
 
 ApiServer::ApiServer(
     std::shared_ptr<manage::auth::AuthService> authService,
@@ -148,11 +149,12 @@ ApiServer::ApiServer(
         std::move(authService),
         std::move(catalogRepository),
         nullptr,
+        nullptr,
         nullptr
     ) {}
 
 ApiServer::ApiServer(manage::data::BomService* bomService)
-    : ApiServer(nullptr, nullptr, bomService, nullptr) {}
+    : ApiServer(nullptr, nullptr, bomService, nullptr, nullptr) {}
 
 ApiServer::ApiServer(
     std::shared_ptr<manage::auth::AuthService> authService,
@@ -162,6 +164,7 @@ ApiServer::ApiServer(
         std::move(authService),
         std::move(catalogRepository),
         bomService,
+        nullptr,
         nullptr
     ) {}
 
@@ -170,6 +173,20 @@ ApiServer::ApiServer(
     std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
     manage::data::BomService* bomService,
     manage::data::QuoteLifecycle* quoteLifecycle
+) : ApiServer(
+        std::move(authService),
+        std::move(catalogRepository),
+        bomService,
+        quoteLifecycle,
+        nullptr
+    ) {}
+
+ApiServer::ApiServer(
+    std::shared_ptr<manage::auth::AuthService> authService,
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+    manage::data::BomService* bomService,
+    manage::data::QuoteLifecycle* quoteLifecycle,
+    manage::data::StatisticsRepository* statisticsRepository
 ) : tcpServer_(new QTcpServer(&server_)),
     authService_(std::move(authService)) {
     server_.route(
@@ -235,6 +252,7 @@ ApiServer::ApiServer(
 
     BomRoutes::registerRoutes(server_, bomService, authService_);
     QuoteRoutes::registerRoutes(server_, quoteLifecycle, authService_);
+    StatisticsRoutes::registerRoutes(server_, statisticsRepository, authService_);
 }
 
 quint16 ApiServer::listen(const QHostAddress& address, quint16 port) {
