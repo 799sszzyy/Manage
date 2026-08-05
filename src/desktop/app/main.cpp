@@ -1,3 +1,5 @@
+#include "manage/desktop/bom_quote_widget.h"
+#include "manage/desktop/catalog_widget.h"
 #include "manage/desktop/main_window.h"
 
 #include <QApplication>
@@ -40,6 +42,14 @@ int main(int argc, char* argv[]) {
     }
 
     manage::desktop::MainWindow window(apiUrl);
+    window.addModuleTab(
+        QStringLiteral("客户与物料"),
+        new manage::desktop::CatalogWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("BOM 与报价"),
+        new manage::desktop::BomQuoteWidget(window.apiClient())
+    );
     window.show();
 
     if (parser.isSet(smokeTestOption)) {
