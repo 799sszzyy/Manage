@@ -1,0 +1,23 @@
+-- Run this file once as a MySQL administrator after replacing the password.
+-- Do not commit a real password into this repository.
+
+CREATE DATABASE IF NOT EXISTS manage
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_0900_ai_ci;
+
+CREATE USER IF NOT EXISTS 'manage_app'@'localhost'
+    IDENTIFIED BY 'REPLACE_WITH_A_STRONG_PASSWORD';
+ALTER USER 'manage_app'@'localhost'
+    IDENTIFIED BY 'REPLACE_WITH_A_STRONG_PASSWORD';
+
+CREATE USER IF NOT EXISTS 'manage_app'@'127.0.0.1'
+    IDENTIFIED BY 'REPLACE_WITH_A_STRONG_PASSWORD';
+ALTER USER 'manage_app'@'127.0.0.1'
+    IDENTIFIED BY 'REPLACE_WITH_A_STRONG_PASSWORD';
+
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+    ON manage.* TO 'manage_app'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+    ON manage.* TO 'manage_app'@'127.0.0.1';
+
+FLUSH PRIVILEGES;
