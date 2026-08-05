@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     Manage
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "Local single-computer quotation management system"
     LANGUAGES CXX
 )
@@ -31,12 +31,14 @@ if(MANAGE_ENABLE_QT)
     find_package(
         Qt6 6.5
         REQUIRED
-        COMPONENTS Core Widgets Network Sql HttpServer
+        COMPONENTS Core Gui Widgets Network Sql HttpServer
     )
 
     qt_standard_project_setup()
+    add_subdirectory(third_party/QXlsx EXCLUDE_FROM_ALL)
     add_subdirectory(src/auth)
     add_subdirectory(src/data)
+    add_subdirectory(src/excel)
     add_subdirectory(src/server)
     add_subdirectory(src/desktop)
 endif()

@@ -1,7 +1,10 @@
 #include "manage/desktop/bom_quote_widget.h"
 #include "manage/desktop/catalog_widget.h"
+#include "manage/desktop/excel_tools_widget.h"
 #include "manage/desktop/main_window.h"
 #include "manage/desktop/quote_management_widget.h"
+#include "manage/desktop/statistics_widget.h"
+#include "manage/desktop/user_management_widget.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -12,7 +15,7 @@
 int main(int argc, char* argv[]) {
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("manage-desktop"));
-    QApplication::setApplicationVersion(QStringLiteral("0.4.0"));
+    QApplication::setApplicationVersion(QStringLiteral("0.5.0"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
@@ -54,6 +57,18 @@ int main(int argc, char* argv[]) {
     window.addModuleTab(
         QStringLiteral("报价管理"),
         new manage::desktop::QuoteManagementWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("Excel 工具"),
+        new manage::desktop::ExcelToolsWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("统计分析"),
+        new manage::desktop::StatisticsWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("用户管理"),
+        new manage::desktop::UserManagementWidget(window.apiClient())
     );
     window.show();
 

@@ -1,6 +1,7 @@
 #include "manage/desktop/bom_quote_widget.h"
 
 #include "manage/desktop/api_client.h"
+#include "manage/desktop/bom_drag_widgets.h"
 
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -13,6 +14,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPointer>
 #include <QPushButton>
 #include <QTabWidget>
@@ -261,16 +263,27 @@ QWidget* BomQuoteWidget::buildBomPage() {
     materialLayout->addWidget(bomRemoveItemButton_);
     editorLayout->addLayout(materialLayout);
 
-    bomItemsTable_ = new QTableWidget(0, 5, editor);
+    auto* dragLayout = new QHBoxLayout;
+    auto* materialDragGroup = new QGroupBox(
+        QStringLiteral("物料选择区（拖到右侧）"), editor
+    );
+    auto* materialDragLayout = new QVBoxLayout(materialDragGroup);
+    bomMaterialList_ = new MaterialDragList(materialDragGroup);
+    nameObject(bomMaterialList_, "bomMaterialDragList");
+    bomMaterialList_->setMinimumWidth(210);
+    materialDragLayout->addWidget(bomMaterialList_);
+
+    auto* bomItemsGroup = new QGroupBox(
+        QStringLiteral("当前 BOM（拖动行可排序）"), editor
+    );
+    auto* bomItemsLayout = new QVBoxLayout(bomItemsGroup);
+    bomItemsTable_ = new BomItemsTable(bomItemsGroup);
     nameObject(bomItemsTable_, "bomItemsTable");
-    bomItemsTable_->setHorizontalHeaderLabels({
-        QStringLiteral("行号"), QStringLiteral("物料编码"),
-        QStringLiteral("物料名称"), QStringLiteral("数量"), QStringLiteral("备注"),
-    });
-    bomItemsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    bomItemsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     bomItemsTable_->horizontalHeader()->setStretchLastSection(true);
-    editorLayout->addWidget(bomItemsTable_);
+    bomItemsLayout->addWidget(bomItemsTable_);
+    dragLayout->addWidget(materialDragGroup, 1);
+    dragLayout->addWidget(bomItemsGroup, 3);
+    editorLayout->addLayout(dragLayout);
 
     auto* actions = new QHBoxLayout;
     bomSaveButton_ = new QPushButton(QStringLiteral("保存基本信息"), editor);
@@ -405,6 +418,18 @@ void BomQuoteWidget::connectUi() {
             this, &BomQuoteWidget::addBomItem);
     connect(bomRemoveItemButton_, &QPushButton::clicked,
             this, &BomQuoteWidget::removeBomItem);
+    connect(bomMaterialList_, &QListWidget::itemDoubleClicked,
+            this, [this](QListWidgetItem* item) {
+                if (!item || !isAdmin() || pendingRequests_ != 0) {
+                    return;
+                }
+                const auto materialId = item->data(kIdRole).toLongLong();
+                const auto index = bomMaterialCombo_->findData(materialId);
+                if (index >= 0) {
+                    bomMaterialCombo_->setCurrentIndex(index);
+                    addBomItem();
+                }
+            });
     connect(bomItemsTable_, &QTableWidget::itemSelectionChanged,
             this, &BomQuoteWidget::updateControlState);
 
@@ -453,6 +478,8 @@ void BomQuoteWidget::updateControlState() {
     bomNameEdit_->setReadOnly(!writable);
     bomDescriptionEdit_->setReadOnly(!writable);
     bomMaterialCombo_->setEnabled(writable && bomMaterialCombo_->count() > 0);
+    bomMaterialList_->setEnabled(writable && bomMaterialList_->count() > 0);
+    bomItemsTable_->setDragEditingEnabled(writable);
     bomAddItemButton_->setEnabled(writable && bomMaterialCombo_->count() > 0);
     bomRemoveItemButton_->setEnabled(writable && selectedBomItem);
     bomItemsTable_->setEditTriggers(
@@ -583,6 +610,7 @@ void BomQuoteWidget::refreshMaterials() {
                 return;
             }
             self->bomMaterialCombo_->clear();
+            self->bomMaterialList_->clear();
             self->quoteMaterialCombo_->clear();
             const auto items = response.body.value(QStringLiteral("items")).toArray();
             for (const auto& value : items) {
@@ -592,6 +620,11 @@ void BomQuoteWidget::refreshMaterials() {
                          material.value(QStringLiteral("name")).toString());
                 const auto id = material.value(QStringLiteral("id")).toInteger();
                 self->bomMaterialCombo_->addItem(label, id);
+                self->bomMaterialList_->addMaterial(
+                    id,
+                    material.value(QStringLiteral("code")).toString(),
+                    material.value(QStringLiteral("name")).toString()
+                );
                 const auto quoteIndex = self->quoteMaterialCombo_->count();
                 self->quoteMaterialCombo_->addItem(label,
                     material.value(QStringLiteral("code")).toString());
@@ -681,6 +714,7 @@ void BomQuoteWidget::applyBom(const QJsonObject& object) {
             item.value(QStringLiteral("notes")).toString()
         ));
     }
+    bomItemsTable_->renumberLines();
     updateControlState();
 }
 
@@ -877,23 +911,16 @@ void BomQuoteWidget::addBomItem() {
         return;
     }
     const auto materialId = bomMaterialCombo_->currentData().toLongLong();
-    for (int row = 0; row < bomItemsTable_->rowCount(); ++row) {
-        if (bomItemsTable_->item(row, 1)->data(kIdRole).toLongLong() == materialId) {
-            bomStatusLabel_->setText(QStringLiteral("同一种物料不能重复加入 BOM。"));
-            return;
-        }
-    }
-    const auto row = bomItemsTable_->rowCount();
-    bomItemsTable_->insertRow(row);
-    bomItemsTable_->setItem(row, 0,
-                            new QTableWidgetItem(QString::number((row + 1) * 10)));
     const auto parts = bomMaterialCombo_->currentText().split(QStringLiteral(" — "));
-    auto* code = readOnlyItem(parts.value(0));
-    code->setData(kIdRole, materialId);
-    bomItemsTable_->setItem(row, 1, code);
-    bomItemsTable_->setItem(row, 2, readOnlyItem(parts.value(1)));
-    bomItemsTable_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("1.000000")));
-    bomItemsTable_->setItem(row, 4, new QTableWidgetItem);
+    if (!bomItemsTable_->addOrMergeMaterial(
+            materialId, parts.value(0), parts.value(1)
+        )) {
+        bomStatusLabel_->setText(QStringLiteral("物料无效或现有数量无法合并。"));
+        return;
+    }
+    bomStatusLabel_->setText(
+        QStringLiteral("物料已加入；若原来已存在，则数量已自动增加。")
+    );
     updateControlState();
 }
 
@@ -901,6 +928,7 @@ void BomQuoteWidget::removeBomItem() {
     const auto row = bomItemsTable_->currentRow();
     if (row >= 0) {
         bomItemsTable_->removeRow(row);
+        bomItemsTable_->renumberLines();
     }
     updateControlState();
 }

@@ -1,12 +1,20 @@
 add_library(manage_desktop_lib STATIC
     include/manage/desktop/api_client.h
+    include/manage/desktop/bom_drag_widgets.h
     include/manage/desktop/bom_quote_widget.h
     include/manage/desktop/catalog_widget.h
+    include/manage/desktop/excel_tools_widget.h
     include/manage/desktop/quote_management_widget.h
+    include/manage/desktop/user_management_widget.h
+    include/manage/desktop/statistics_widget.h
     src/api_client.cpp
+    src/bom_drag_widgets.cpp
     src/bom_quote_widget.cpp
     src/catalog_widget.cpp
+    src/excel_tools_widget.cpp
     src/quote_management_widget.cpp
+    src/user_management_widget.cpp
+    src/statistics_widget.cpp
     src/main_window.cpp
 )
 
@@ -23,6 +31,7 @@ target_link_libraries(manage_desktop_lib
         Qt6::Core
         Qt6::Network
         Qt6::Widgets
+        Manage::Excel
 )
 
 manage_apply_project_options(manage_desktop_lib)
