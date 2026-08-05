@@ -1,0 +1,958 @@
+#include "manage/desktop/catalog_widget.h"
+
+#include "manage/desktop/api_client.h"
+
+#include <QAbstractItemView>
+#include <QCheckBox>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHeaderView>
+#include <QHBoxLayout>
+#include <QJsonArray>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPointer>
+#include <QPushButton>
+#include <QRegularExpression>
+#include <QSplitter>
+#include <QTableWidget>
+#include <QTableWidgetItem>
+#include <QTabWidget>
+#include <QUrl>
+#include <QUrlQuery>
+#include <QVBoxLayout>
+
+#include <limits>
+#include <optional>
+#include <utility>
+
+namespace manage::desktop {
+namespace {
+
+constexpr int kPageSize = 20;
+constexpr qint64 kMaxSafeJsonInteger = 9'007'199'254'740'991;
+
+QPushButton* button(const QString& text, const QString& objectName, QWidget* parent) {
+    auto* result = new QPushButton(text, parent);
+    result->setObjectName(objectName);
+    return result;
+}
+
+QLineEdit* lineEdit(const QString& objectName, QWidget* parent) {
+    auto* result = new QLineEdit(parent);
+    result->setObjectName(objectName);
+    return result;
+}
+
+QTableWidgetItem* readOnlyItem(const QString& text) {
+    auto* item = new QTableWidgetItem(text);
+    item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    return item;
+}
+
+QString priceText(qint64 cents) {
+    const auto whole = cents / 100;
+    const auto fraction = qAbs(cents % 100);
+    return QStringLiteral("%1.%2")
+        .arg(whole)
+        .arg(fraction, 2, 10, QLatin1Char('0'));
+}
+
+std::optional<qint64> parsePrice(const QString& text) {
+    static const QRegularExpression expression(
+        QStringLiteral(R"(^\s*(\d+)(?:\.(\d{1,2}))?\s*$)")
+    );
+    const auto match = expression.match(text);
+    if (!match.hasMatch()) {
+        return std::nullopt;
+    }
+
+    bool ok = false;
+    const auto whole = match.captured(1).toLongLong(&ok);
+    if (!ok) {
+        return std::nullopt;
+    }
+    auto fractionText = match.captured(2);
+    if (fractionText.size() == 1) {
+        fractionText.append(QLatin1Char('0'));
+    }
+    const auto fraction = fractionText.isEmpty() ? 0 : fractionText.toInt(&ok);
+    if (!ok || whole > (kMaxSafeJsonInteger - fraction) / 100) {
+        return std::nullopt;
+    }
+    return whole * 100 + fraction;
+}
+
+} // namespace
+
+CatalogWidget::CatalogWidget(ApiClient* apiClient, QWidget* parent)
+    : QWidget(parent), apiClient_(apiClient) {
+    setObjectName(QStringLiteral("catalogWidget"));
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    auto* tabs = new QTabWidget(this);
+    tabs->setObjectName(QStringLiteral("catalogTabs"));
+    tabs->addTab(createMaterialsPage(), QStringLiteral("物料库"));
+    tabs->addTab(createCustomersPage(), QStringLiteral("客户库"));
+    layout->addWidget(tabs);
+
+    connectActions();
+    updateWriteAccess();
+    if (apiClient_) {
+        connect(
+            apiClient_,
+            &ApiClient::sessionChanged,
+            this,
+            [this](bool) { applySessionState(); }
+        );
+        applySessionState();
+    } else {
+        materialsStatusLabel_->setText(QStringLiteral("API 客户端不可用。"));
+        customersStatusLabel_->setText(QStringLiteral("API 客户端不可用。"));
+    }
+}
+
+QWidget* CatalogWidget::createMaterialsPage() {
+    auto* page = new QWidget(this);
+    page->setObjectName(QStringLiteral("materialsPage"));
+    auto* pageLayout = new QVBoxLayout(page);
+
+    auto* searchLayout = new QHBoxLayout;
+    materialsSearchEdit_ = lineEdit(QStringLiteral("materialsSearchEdit"), page);
+    materialsSearchEdit_->setPlaceholderText(QStringLiteral("按编码、名称或规格搜索"));
+    materialsSearchButton_ = button(
+        QStringLiteral("搜索"), QStringLiteral("materialsSearchButton"), page
+    );
+    materialsRefreshButton_ = button(
+        QStringLiteral("刷新"), QStringLiteral("materialsRefreshButton"), page
+    );
+    searchLayout->addWidget(materialsSearchEdit_, 1);
+    searchLayout->addWidget(materialsSearchButton_);
+    searchLayout->addWidget(materialsRefreshButton_);
+    pageLayout->addLayout(searchLayout);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, page);
+    splitter->setObjectName(QStringLiteral("materialsSplitter"));
+    materialsTable_ = new QTableWidget(splitter);
+    materialsTable_->setObjectName(QStringLiteral("materialsTable"));
+    materialsTable_->setColumnCount(8);
+    materialsTable_->setHorizontalHeaderLabels({
+        QStringLiteral("编码"),
+        QStringLiteral("名称"),
+        QStringLiteral("规格"),
+        QStringLiteral("单位"),
+        QStringLiteral("分类"),
+        QStringLiteral("单价（元）"),
+        QStringLiteral("状态"),
+        QStringLiteral("版本"),
+    });
+    materialsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    materialsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    materialsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    materialsTable_->verticalHeader()->setVisible(false);
+    materialsTable_->horizontalHeader()->setStretchLastSection(true);
+    splitter->addWidget(materialsTable_);
+    splitter->addWidget(createMaterialEditor());
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    pageLayout->addWidget(splitter, 1);
+
+    auto* actions = new QHBoxLayout;
+    materialAddButton_ = button(
+        QStringLiteral("新增物料"), QStringLiteral("materialAddButton"), page
+    );
+    materialEditButton_ = button(
+        QStringLiteral("编辑选中项"), QStringLiteral("materialEditButton"), page
+    );
+    materialToggleButton_ = button(
+        QStringLiteral("停用选中项"), QStringLiteral("materialToggleButton"), page
+    );
+    materialsPreviousButton_ = button(
+        QStringLiteral("上一页"), QStringLiteral("materialsPreviousButton"), page
+    );
+    materialsNextButton_ = button(
+        QStringLiteral("下一页"), QStringLiteral("materialsNextButton"), page
+    );
+    materialsPageLabel_ = new QLabel(page);
+    materialsPageLabel_->setObjectName(QStringLiteral("materialsPageLabel"));
+    actions->addWidget(materialAddButton_);
+    actions->addWidget(materialEditButton_);
+    actions->addWidget(materialToggleButton_);
+    actions->addStretch();
+    actions->addWidget(materialsPreviousButton_);
+    actions->addWidget(materialsPageLabel_);
+    actions->addWidget(materialsNextButton_);
+    pageLayout->addLayout(actions);
+
+    materialsStatusLabel_ = new QLabel(page);
+    materialsStatusLabel_->setObjectName(QStringLiteral("materialsStatusLabel"));
+    materialsStatusLabel_->setWordWrap(true);
+    pageLayout->addWidget(materialsStatusLabel_);
+    return page;
+}
+
+QWidget* CatalogWidget::createMaterialEditor() {
+    materialEditor_ = new QGroupBox(QStringLiteral("物料信息"), this);
+    materialEditor_->setObjectName(QStringLiteral("materialEditor"));
+    auto* layout = new QFormLayout(materialEditor_);
+    materialCodeEdit_ = lineEdit(QStringLiteral("materialCodeEdit"), materialEditor_);
+    materialNameEdit_ = lineEdit(QStringLiteral("materialNameEdit"), materialEditor_);
+    materialSpecificationEdit_ = lineEdit(
+        QStringLiteral("materialSpecificationEdit"), materialEditor_
+    );
+    materialUnitEdit_ = lineEdit(QStringLiteral("materialUnitEdit"), materialEditor_);
+    materialCategoryEdit_ = lineEdit(
+        QStringLiteral("materialCategoryEdit"), materialEditor_
+    );
+    materialPriceEdit_ = lineEdit(QStringLiteral("materialPriceEdit"), materialEditor_);
+    materialPriceEdit_->setPlaceholderText(QStringLiteral("例如 12.50"));
+    materialEnabledCheck_ = new QCheckBox(QStringLiteral("启用"), materialEditor_);
+    materialEnabledCheck_->setObjectName(QStringLiteral("materialEnabledCheck"));
+    materialSaveButton_ = button(
+        QStringLiteral("保存"), QStringLiteral("materialSaveButton"), materialEditor_
+    );
+    materialCancelButton_ = button(
+        QStringLiteral("取消"), QStringLiteral("materialCancelButton"), materialEditor_
+    );
+
+    layout->addRow(QStringLiteral("编码 *"), materialCodeEdit_);
+    layout->addRow(QStringLiteral("名称 *"), materialNameEdit_);
+    layout->addRow(QStringLiteral("规格"), materialSpecificationEdit_);
+    layout->addRow(QStringLiteral("单位 *"), materialUnitEdit_);
+    layout->addRow(QStringLiteral("分类"), materialCategoryEdit_);
+    layout->addRow(QStringLiteral("单价（元）*"), materialPriceEdit_);
+    layout->addRow(QString(), materialEnabledCheck_);
+    auto* buttons = new QHBoxLayout;
+    buttons->addWidget(materialSaveButton_);
+    buttons->addWidget(materialCancelButton_);
+    layout->addRow(buttons);
+    materialEditor_->setEnabled(false);
+    return materialEditor_;
+}
+
+QWidget* CatalogWidget::createCustomersPage() {
+    auto* page = new QWidget(this);
+    page->setObjectName(QStringLiteral("customersPage"));
+    auto* pageLayout = new QVBoxLayout(page);
+
+    auto* searchLayout = new QHBoxLayout;
+    customersSearchEdit_ = lineEdit(QStringLiteral("customersSearchEdit"), page);
+    customersSearchEdit_->setPlaceholderText(QStringLiteral("按客户名称、联系人或电话搜索"));
+    customersSearchButton_ = button(
+        QStringLiteral("搜索"), QStringLiteral("customersSearchButton"), page
+    );
+    customersRefreshButton_ = button(
+        QStringLiteral("刷新"), QStringLiteral("customersRefreshButton"), page
+    );
+    searchLayout->addWidget(customersSearchEdit_, 1);
+    searchLayout->addWidget(customersSearchButton_);
+    searchLayout->addWidget(customersRefreshButton_);
+    pageLayout->addLayout(searchLayout);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, page);
+    splitter->setObjectName(QStringLiteral("customersSplitter"));
+    customersTable_ = new QTableWidget(splitter);
+    customersTable_->setObjectName(QStringLiteral("customersTable"));
+    customersTable_->setColumnCount(6);
+    customersTable_->setHorizontalHeaderLabels({
+        QStringLiteral("客户名称"),
+        QStringLiteral("联系人"),
+        QStringLiteral("电话"),
+        QStringLiteral("地址"),
+        QStringLiteral("备注"),
+        QStringLiteral("版本"),
+    });
+    customersTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    customersTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    customersTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    customersTable_->verticalHeader()->setVisible(false);
+    customersTable_->horizontalHeader()->setStretchLastSection(true);
+    splitter->addWidget(customersTable_);
+    splitter->addWidget(createCustomerEditor());
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    pageLayout->addWidget(splitter, 1);
+
+    auto* actions = new QHBoxLayout;
+    customerAddButton_ = button(
+        QStringLiteral("新增客户"), QStringLiteral("customerAddButton"), page
+    );
+    customerEditButton_ = button(
+        QStringLiteral("编辑选中项"), QStringLiteral("customerEditButton"), page
+    );
+    customersPreviousButton_ = button(
+        QStringLiteral("上一页"), QStringLiteral("customersPreviousButton"), page
+    );
+    customersNextButton_ = button(
+        QStringLiteral("下一页"), QStringLiteral("customersNextButton"), page
+    );
+    customersPageLabel_ = new QLabel(page);
+    customersPageLabel_->setObjectName(QStringLiteral("customersPageLabel"));
+    actions->addWidget(customerAddButton_);
+    actions->addWidget(customerEditButton_);
+    actions->addStretch();
+    actions->addWidget(customersPreviousButton_);
+    actions->addWidget(customersPageLabel_);
+    actions->addWidget(customersNextButton_);
+    pageLayout->addLayout(actions);
+
+    customersStatusLabel_ = new QLabel(page);
+    customersStatusLabel_->setObjectName(QStringLiteral("customersStatusLabel"));
+    customersStatusLabel_->setWordWrap(true);
+    pageLayout->addWidget(customersStatusLabel_);
+    return page;
+}
+
+QWidget* CatalogWidget::createCustomerEditor() {
+    customerEditor_ = new QGroupBox(QStringLiteral("客户信息"), this);
+    customerEditor_->setObjectName(QStringLiteral("customerEditor"));
+    auto* layout = new QFormLayout(customerEditor_);
+    customerNameEdit_ = lineEdit(QStringLiteral("customerNameEdit"), customerEditor_);
+    customerContactEdit_ = lineEdit(QStringLiteral("customerContactEdit"), customerEditor_);
+    customerPhoneEdit_ = lineEdit(QStringLiteral("customerPhoneEdit"), customerEditor_);
+    customerAddressEdit_ = lineEdit(QStringLiteral("customerAddressEdit"), customerEditor_);
+    customerNotesEdit_ = lineEdit(QStringLiteral("customerNotesEdit"), customerEditor_);
+    customerSaveButton_ = button(
+        QStringLiteral("保存"), QStringLiteral("customerSaveButton"), customerEditor_
+    );
+    customerCancelButton_ = button(
+        QStringLiteral("取消"), QStringLiteral("customerCancelButton"), customerEditor_
+    );
+    layout->addRow(QStringLiteral("客户名称 *"), customerNameEdit_);
+    layout->addRow(QStringLiteral("联系人"), customerContactEdit_);
+    layout->addRow(QStringLiteral("电话"), customerPhoneEdit_);
+    layout->addRow(QStringLiteral("地址"), customerAddressEdit_);
+    layout->addRow(QStringLiteral("备注"), customerNotesEdit_);
+    auto* buttons = new QHBoxLayout;
+    buttons->addWidget(customerSaveButton_);
+    buttons->addWidget(customerCancelButton_);
+    layout->addRow(buttons);
+    customerEditor_->setEnabled(false);
+    return customerEditor_;
+}
+
+void CatalogWidget::connectActions() {
+    connect(materialsSearchButton_, &QPushButton::clicked, this, [this]() {
+        materialPage_ = 1;
+        loadMaterials();
+    });
+    connect(materialsSearchEdit_, &QLineEdit::returnPressed, materialsSearchButton_, &QPushButton::click);
+    connect(materialsRefreshButton_, &QPushButton::clicked, this, &CatalogWidget::refreshMaterials);
+    connect(materialsPreviousButton_, &QPushButton::clicked, this, [this]() {
+        if (materialPage_ > 1) {
+            --materialPage_;
+            loadMaterials();
+        }
+    });
+    connect(materialsNextButton_, &QPushButton::clicked, this, [this]() {
+        if (materialPage_ < materialTotalPages_) {
+            ++materialPage_;
+            loadMaterials();
+        }
+    });
+    connect(materialsTable_, &QTableWidget::itemSelectionChanged, this, &CatalogWidget::updateWriteAccess);
+    connect(materialAddButton_, &QPushButton::clicked, this, &CatalogWidget::beginNewMaterial);
+    connect(materialEditButton_, &QPushButton::clicked, this, &CatalogWidget::beginEditMaterial);
+    connect(materialToggleButton_, &QPushButton::clicked, this, &CatalogWidget::toggleSelectedMaterial);
+    connect(materialSaveButton_, &QPushButton::clicked, this, &CatalogWidget::saveMaterial);
+    connect(materialCancelButton_, &QPushButton::clicked, this, &CatalogWidget::cancelMaterialEdit);
+
+    connect(customersSearchButton_, &QPushButton::clicked, this, [this]() {
+        customerPage_ = 1;
+        loadCustomers();
+    });
+    connect(customersSearchEdit_, &QLineEdit::returnPressed, customersSearchButton_, &QPushButton::click);
+    connect(customersRefreshButton_, &QPushButton::clicked, this, &CatalogWidget::refreshCustomers);
+    connect(customersPreviousButton_, &QPushButton::clicked, this, [this]() {
+        if (customerPage_ > 1) {
+            --customerPage_;
+            loadCustomers();
+        }
+    });
+    connect(customersNextButton_, &QPushButton::clicked, this, [this]() {
+        if (customerPage_ < customerTotalPages_) {
+            ++customerPage_;
+            loadCustomers();
+        }
+    });
+    connect(customersTable_, &QTableWidget::itemSelectionChanged, this, &CatalogWidget::updateWriteAccess);
+    connect(customerAddButton_, &QPushButton::clicked, this, &CatalogWidget::beginNewCustomer);
+    connect(customerEditButton_, &QPushButton::clicked, this, &CatalogWidget::beginEditCustomer);
+    connect(customerSaveButton_, &QPushButton::clicked, this, &CatalogWidget::saveCustomer);
+    connect(customerCancelButton_, &QPushButton::clicked, this, &CatalogWidget::cancelCustomerEdit);
+}
+
+void CatalogWidget::updateWriteAccess() {
+    const auto writable = canWrite();
+    const auto materialSelected = selectedMaterialRow() >= 0;
+    const auto customerSelected = selectedCustomerRow() >= 0;
+    materialAddButton_->setEnabled(writable && !materialBusy_);
+    materialEditButton_->setEnabled(writable && !materialBusy_ && materialSelected);
+    materialToggleButton_->setEnabled(writable && !materialBusy_ && materialSelected);
+    materialEditor_->setEnabled(writable && materialEditing_ && !materialBusy_);
+    customerAddButton_->setEnabled(writable && !customerBusy_);
+    customerEditButton_->setEnabled(writable && !customerBusy_ && customerSelected);
+    customerEditor_->setEnabled(writable && customerEditing_ && !customerBusy_);
+
+    if (materialSelected) {
+        const auto enabled = materials_.at(selectedMaterialRow())
+                                 .value(QStringLiteral("isEnabled"))
+                                 .toBool();
+        materialToggleButton_->setText(
+            enabled ? QStringLiteral("停用选中项") : QStringLiteral("启用选中项")
+        );
+    }
+}
+
+void CatalogWidget::applySessionState() {
+    if (sessionReady()) {
+        updateWriteAccess();
+        refreshMaterials();
+        refreshCustomers();
+        return;
+    }
+
+    materialEditing_ = false;
+    customerEditing_ = false;
+    editingMaterialId_ = 0;
+    editingMaterialRevision_ = 0;
+    editingCustomerId_ = 0;
+    editingCustomerRevision_ = 0;
+    materials_.clear();
+    customers_.clear();
+    materialsTable_->setRowCount(0);
+    customersTable_->setRowCount(0);
+    materialPage_ = 1;
+    materialTotalPages_ = 0;
+    materialTotal_ = 0;
+    customerPage_ = 1;
+    customerTotalPages_ = 0;
+    customerTotal_ = 0;
+    materialBusy_ = false;
+    customerBusy_ = false;
+
+    const auto mustChangePassword =
+        apiClient_ && apiClient_->isAuthenticated() &&
+        apiClient_->session()
+            .user
+            .value(QStringLiteral("mustChangePassword"))
+            .toBool(true);
+    const auto materialMessage = mustChangePassword
+                                     ? QStringLiteral("请先修改临时密码，再查看物料。")
+                                     : QStringLiteral("请先登录后查看物料。");
+    const auto customerMessage = mustChangePassword
+                                     ? QStringLiteral("请先修改临时密码，再查看客户。")
+                                     : QStringLiteral("请先登录后查看客户。");
+    materialsStatusLabel_->setText(materialMessage);
+    customersStatusLabel_->setText(customerMessage);
+    materialEditor_->setTitle(QStringLiteral("物料信息"));
+    customerEditor_->setTitle(QStringLiteral("客户信息"));
+    setMaterialBusy(false);
+    setCustomerBusy(false);
+}
+
+bool CatalogWidget::sessionReady() const {
+    return apiClient_ && apiClient_->isAuthenticated() &&
+           !apiClient_->session()
+                .user
+                .value(QStringLiteral("mustChangePassword"))
+                .toBool(true);
+}
+
+bool CatalogWidget::canWrite() const {
+    return sessionReady() &&
+           apiClient_->session().user.value(QStringLiteral("role")).toString() ==
+               QStringLiteral("admin");
+}
+
+void CatalogWidget::refreshMaterials() {
+    materialPage_ = 1;
+    loadMaterials();
+}
+
+void CatalogWidget::refreshCustomers() {
+    customerPage_ = 1;
+    loadCustomers();
+}
+
+void CatalogWidget::loadMaterials() {
+    if (!sessionReady()) {
+        materialsStatusLabel_->setText(
+            apiClient_ && apiClient_->isAuthenticated()
+                ? QStringLiteral("请先修改临时密码，再查看物料。")
+                : QStringLiteral("请先登录后查看物料。")
+        );
+        return;
+    }
+    if (materialBusy_) {
+        return;
+    }
+    setMaterialBusy(true);
+    materialsStatusLabel_->setText(QStringLiteral("正在加载物料…"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("page"), QString::number(materialPage_));
+    query.addQueryItem(QStringLiteral("pageSize"), QString::number(kPageSize));
+    const auto search = materialsSearchEdit_->text().trimmed();
+    if (!search.isEmpty()) {
+        query.addQueryItem(QStringLiteral("search"), search);
+    }
+    const auto path = QStringLiteral("/api/v1/materials?%1")
+                          .arg(query.toString(QUrl::FullyEncoded));
+    apiClient_->get(path, [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+        if (self) {
+            self->showMaterials(response);
+        }
+    });
+}
+
+void CatalogWidget::loadCustomers() {
+    if (!sessionReady()) {
+        customersStatusLabel_->setText(
+            apiClient_ && apiClient_->isAuthenticated()
+                ? QStringLiteral("请先修改临时密码，再查看客户。")
+                : QStringLiteral("请先登录后查看客户。")
+        );
+        return;
+    }
+    if (customerBusy_) {
+        return;
+    }
+    setCustomerBusy(true);
+    customersStatusLabel_->setText(QStringLiteral("正在加载客户…"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("page"), QString::number(customerPage_));
+    query.addQueryItem(QStringLiteral("pageSize"), QString::number(kPageSize));
+    const auto search = customersSearchEdit_->text().trimmed();
+    if (!search.isEmpty()) {
+        query.addQueryItem(QStringLiteral("search"), search);
+    }
+    const auto path = QStringLiteral("/api/v1/customers?%1")
+                          .arg(query.toString(QUrl::FullyEncoded));
+    apiClient_->get(path, [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+        if (self) {
+            self->showCustomers(response);
+        }
+    });
+}
+
+void CatalogWidget::showMaterials(const ApiResponse& response) {
+    setMaterialBusy(false);
+    if (!sessionReady()) {
+        materialsStatusLabel_->setText(QStringLiteral("请先完成登录和临时密码修改。"));
+        return;
+    }
+    if (!response.succeeded()) {
+        materialsStatusLabel_->setText(errorText(response));
+        return;
+    }
+    const auto items = response.body.value(QStringLiteral("items"));
+    if (!items.isArray()) {
+        materialsStatusLabel_->setText(QStringLiteral("服务器返回的物料列表格式不正确。"));
+        return;
+    }
+
+    materials_.clear();
+    materialsTable_->setRowCount(0);
+    for (const auto& value : items.toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const auto material = value.toObject();
+        const auto row = materialsTable_->rowCount();
+        materials_.append(material);
+        materialsTable_->insertRow(row);
+        materialsTable_->setItem(row, 0, readOnlyItem(material.value(QStringLiteral("code")).toString()));
+        materialsTable_->setItem(row, 1, readOnlyItem(material.value(QStringLiteral("name")).toString()));
+        materialsTable_->setItem(row, 2, readOnlyItem(material.value(QStringLiteral("specification")).toString()));
+        materialsTable_->setItem(row, 3, readOnlyItem(material.value(QStringLiteral("unit")).toString()));
+        materialsTable_->setItem(row, 4, readOnlyItem(material.value(QStringLiteral("category")).toString()));
+        materialsTable_->setItem(row, 5, readOnlyItem(priceText(material.value(QStringLiteral("currentUnitPriceCents")).toInteger())));
+        materialsTable_->setItem(row, 6, readOnlyItem(material.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
+        materialsTable_->setItem(row, 7, readOnlyItem(QString::number(material.value(QStringLiteral("revision")).toInteger())));
+    }
+    materialPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt(1));
+    materialTotalPages_ = qMax(0, response.body.value(QStringLiteral("totalPages")).toInt());
+    materialTotal_ = qMax<qint64>(0, response.body.value(QStringLiteral("total")).toInteger());
+    materialsStatusLabel_->setText(QStringLiteral("已加载 %1 条物料。")
+                                       .arg(materials_.size()));
+    updateMaterialPaging();
+    updateWriteAccess();
+}
+
+void CatalogWidget::showCustomers(const ApiResponse& response) {
+    setCustomerBusy(false);
+    if (!sessionReady()) {
+        customersStatusLabel_->setText(QStringLiteral("请先完成登录和临时密码修改。"));
+        return;
+    }
+    if (!response.succeeded()) {
+        customersStatusLabel_->setText(errorText(response));
+        return;
+    }
+    const auto items = response.body.value(QStringLiteral("items"));
+    if (!items.isArray()) {
+        customersStatusLabel_->setText(QStringLiteral("服务器返回的客户列表格式不正确。"));
+        return;
+    }
+
+    customers_.clear();
+    customersTable_->setRowCount(0);
+    for (const auto& value : items.toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const auto customer = value.toObject();
+        const auto row = customersTable_->rowCount();
+        customers_.append(customer);
+        customersTable_->insertRow(row);
+        customersTable_->setItem(row, 0, readOnlyItem(customer.value(QStringLiteral("name")).toString()));
+        customersTable_->setItem(row, 1, readOnlyItem(customer.value(QStringLiteral("contactName")).toString()));
+        customersTable_->setItem(row, 2, readOnlyItem(customer.value(QStringLiteral("phone")).toString()));
+        customersTable_->setItem(row, 3, readOnlyItem(customer.value(QStringLiteral("address")).toString()));
+        customersTable_->setItem(row, 4, readOnlyItem(customer.value(QStringLiteral("notes")).toString()));
+        customersTable_->setItem(row, 5, readOnlyItem(QString::number(customer.value(QStringLiteral("revision")).toInteger())));
+    }
+    customerPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt(1));
+    customerTotalPages_ = qMax(0, response.body.value(QStringLiteral("totalPages")).toInt());
+    customerTotal_ = qMax<qint64>(0, response.body.value(QStringLiteral("total")).toInteger());
+    customersStatusLabel_->setText(QStringLiteral("已加载 %1 条客户。")
+                                       .arg(customers_.size()));
+    updateCustomerPaging();
+    updateWriteAccess();
+}
+
+void CatalogWidget::updateMaterialPaging() {
+    const auto shownTotalPages = qMax(1, materialTotalPages_);
+    materialsPageLabel_->setText(
+        QStringLiteral("第 %1 / %2 页，共 %3 条")
+            .arg(materialPage_)
+            .arg(shownTotalPages)
+            .arg(materialTotal_)
+    );
+    materialsPreviousButton_->setEnabled(
+        sessionReady() && !materialBusy_ && materialPage_ > 1
+    );
+    materialsNextButton_->setEnabled(
+        sessionReady() && !materialBusy_ && materialTotalPages_ > 0 &&
+        materialPage_ < materialTotalPages_
+    );
+}
+
+void CatalogWidget::updateCustomerPaging() {
+    const auto shownTotalPages = qMax(1, customerTotalPages_);
+    customersPageLabel_->setText(
+        QStringLiteral("第 %1 / %2 页，共 %3 条")
+            .arg(customerPage_)
+            .arg(shownTotalPages)
+            .arg(customerTotal_)
+    );
+    customersPreviousButton_->setEnabled(
+        sessionReady() && !customerBusy_ && customerPage_ > 1
+    );
+    customersNextButton_->setEnabled(
+        sessionReady() && !customerBusy_ && customerTotalPages_ > 0 &&
+        customerPage_ < customerTotalPages_
+    );
+}
+
+void CatalogWidget::beginNewMaterial() {
+    if (!canWrite()) {
+        return;
+    }
+    editingMaterialId_ = 0;
+    editingMaterialRevision_ = 0;
+    materialEditing_ = true;
+    materialCodeEdit_->clear();
+    materialNameEdit_->clear();
+    materialSpecificationEdit_->clear();
+    materialUnitEdit_->clear();
+    materialCategoryEdit_->clear();
+    materialPriceEdit_->clear();
+    materialEnabledCheck_->setChecked(true);
+    materialEditor_->setTitle(QStringLiteral("新增物料"));
+    updateWriteAccess();
+    materialCodeEdit_->setFocus();
+}
+
+void CatalogWidget::beginEditMaterial() {
+    const auto row = selectedMaterialRow();
+    if (!canWrite() || row < 0) {
+        return;
+    }
+    const auto material = materials_.at(row);
+    editingMaterialId_ = material.value(QStringLiteral("id")).toInteger();
+    editingMaterialRevision_ = material.value(QStringLiteral("revision")).toInteger();
+    materialEditing_ = true;
+    materialCodeEdit_->setText(material.value(QStringLiteral("code")).toString());
+    materialNameEdit_->setText(material.value(QStringLiteral("name")).toString());
+    materialSpecificationEdit_->setText(material.value(QStringLiteral("specification")).toString());
+    materialUnitEdit_->setText(material.value(QStringLiteral("unit")).toString());
+    materialCategoryEdit_->setText(material.value(QStringLiteral("category")).toString());
+    materialPriceEdit_->setText(priceText(material.value(QStringLiteral("currentUnitPriceCents")).toInteger()));
+    materialEnabledCheck_->setChecked(material.value(QStringLiteral("isEnabled")).toBool());
+    materialEditor_->setTitle(QStringLiteral("编辑物料"));
+    updateWriteAccess();
+}
+
+void CatalogWidget::saveMaterial() {
+    if (!canWrite() || !materialEditing_ || materialBusy_) {
+        return;
+    }
+    const auto code = materialCodeEdit_->text().trimmed();
+    const auto name = materialNameEdit_->text().trimmed();
+    const auto unit = materialUnitEdit_->text().trimmed();
+    const auto cents = parsePrice(materialPriceEdit_->text());
+    if (code.isEmpty() || name.isEmpty() || unit.isEmpty()) {
+        materialsStatusLabel_->setText(QStringLiteral("请填写物料编码、名称和单位。"));
+        return;
+    }
+    if (!cents.has_value()) {
+        materialsStatusLabel_->setText(
+            QStringLiteral("单价请输入非负金额，最多保留两位小数，例如 12.50。")
+        );
+        return;
+    }
+
+    QJsonObject body{
+        {QStringLiteral("code"), code},
+        {QStringLiteral("name"), name},
+        {QStringLiteral("specification"), materialSpecificationEdit_->text().trimmed()},
+        {QStringLiteral("unit"), unit},
+        {QStringLiteral("category"), materialCategoryEdit_->text().trimmed()},
+        {QStringLiteral("currentUnitPriceCents"), *cents},
+        {QStringLiteral("isEnabled"), materialEnabledCheck_->isChecked()},
+    };
+    const auto updating = editingMaterialId_ > 0;
+    if (updating) {
+        body.insert(QStringLiteral("revision"), editingMaterialRevision_);
+    }
+    setMaterialBusy(true);
+    materialsStatusLabel_->setText(QStringLiteral("正在保存物料…"));
+    const auto callback = [self = QPointer<CatalogWidget>(this), updating](ApiResponse response) {
+        if (!self) {
+            return;
+        }
+        self->setMaterialBusy(false);
+        if (!response.succeeded()) {
+            self->materialsStatusLabel_->setText(self->errorText(response));
+            return;
+        }
+        self->cancelMaterialEdit();
+        self->materialsStatusLabel_->setText(
+            updating ? QStringLiteral("物料修改成功。") : QStringLiteral("物料新增成功。")
+        );
+        self->loadMaterials();
+    };
+    if (updating) {
+        apiClient_->put(
+            QStringLiteral("/api/v1/materials/%1").arg(editingMaterialId_),
+            body,
+            callback
+        );
+    } else {
+        apiClient_->post(QStringLiteral("/api/v1/materials"), body, callback);
+    }
+}
+
+void CatalogWidget::cancelMaterialEdit() {
+    materialEditing_ = false;
+    editingMaterialId_ = 0;
+    editingMaterialRevision_ = 0;
+    materialEditor_->setTitle(QStringLiteral("物料信息"));
+    updateWriteAccess();
+}
+
+void CatalogWidget::toggleSelectedMaterial() {
+    const auto row = selectedMaterialRow();
+    if (!canWrite() || row < 0 || materialBusy_) {
+        return;
+    }
+    const auto material = materials_.at(row);
+    const auto enabled = material.value(QStringLiteral("isEnabled")).toBool();
+    const QJsonObject body{
+        {QStringLiteral("revision"), material.value(QStringLiteral("revision")).toInteger()},
+        {QStringLiteral("isEnabled"), !enabled},
+    };
+    setMaterialBusy(true);
+    materialsStatusLabel_->setText(
+        enabled ? QStringLiteral("正在停用物料…") : QStringLiteral("正在启用物料…")
+    );
+    apiClient_->patch(
+        QStringLiteral("/api/v1/materials/%1/enabled")
+            .arg(material.value(QStringLiteral("id")).toInteger()),
+        body,
+        [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+            if (!self) {
+                return;
+            }
+            self->setMaterialBusy(false);
+            if (!response.succeeded()) {
+                self->materialsStatusLabel_->setText(self->errorText(response));
+                return;
+            }
+            self->loadMaterials();
+        }
+    );
+}
+
+void CatalogWidget::beginNewCustomer() {
+    if (!canWrite()) {
+        return;
+    }
+    editingCustomerId_ = 0;
+    editingCustomerRevision_ = 0;
+    customerEditing_ = true;
+    customerNameEdit_->clear();
+    customerContactEdit_->clear();
+    customerPhoneEdit_->clear();
+    customerAddressEdit_->clear();
+    customerNotesEdit_->clear();
+    customerEditor_->setTitle(QStringLiteral("新增客户"));
+    updateWriteAccess();
+    customerNameEdit_->setFocus();
+}
+
+void CatalogWidget::beginEditCustomer() {
+    const auto row = selectedCustomerRow();
+    if (!canWrite() || row < 0) {
+        return;
+    }
+    const auto customer = customers_.at(row);
+    editingCustomerId_ = customer.value(QStringLiteral("id")).toInteger();
+    editingCustomerRevision_ = customer.value(QStringLiteral("revision")).toInteger();
+    customerEditing_ = true;
+    customerNameEdit_->setText(customer.value(QStringLiteral("name")).toString());
+    customerContactEdit_->setText(customer.value(QStringLiteral("contactName")).toString());
+    customerPhoneEdit_->setText(customer.value(QStringLiteral("phone")).toString());
+    customerAddressEdit_->setText(customer.value(QStringLiteral("address")).toString());
+    customerNotesEdit_->setText(customer.value(QStringLiteral("notes")).toString());
+    customerEditor_->setTitle(QStringLiteral("编辑客户"));
+    updateWriteAccess();
+}
+
+void CatalogWidget::saveCustomer() {
+    if (!canWrite() || !customerEditing_ || customerBusy_) {
+        return;
+    }
+    const auto name = customerNameEdit_->text().trimmed();
+    if (name.isEmpty()) {
+        customersStatusLabel_->setText(QStringLiteral("请填写客户名称。"));
+        return;
+    }
+    QJsonObject body{
+        {QStringLiteral("name"), name},
+        {QStringLiteral("contactName"), customerContactEdit_->text().trimmed()},
+        {QStringLiteral("phone"), customerPhoneEdit_->text().trimmed()},
+        {QStringLiteral("address"), customerAddressEdit_->text().trimmed()},
+        {QStringLiteral("notes"), customerNotesEdit_->text().trimmed()},
+    };
+    const auto updating = editingCustomerId_ > 0;
+    if (updating) {
+        body.insert(QStringLiteral("revision"), editingCustomerRevision_);
+    }
+    setCustomerBusy(true);
+    customersStatusLabel_->setText(QStringLiteral("正在保存客户…"));
+    const auto callback = [self = QPointer<CatalogWidget>(this), updating](ApiResponse response) {
+        if (!self) {
+            return;
+        }
+        self->setCustomerBusy(false);
+        if (!response.succeeded()) {
+            self->customersStatusLabel_->setText(self->errorText(response));
+            return;
+        }
+        self->cancelCustomerEdit();
+        self->customersStatusLabel_->setText(
+            updating ? QStringLiteral("客户修改成功。") : QStringLiteral("客户新增成功。")
+        );
+        self->loadCustomers();
+    };
+    if (updating) {
+        apiClient_->put(
+            QStringLiteral("/api/v1/customers/%1").arg(editingCustomerId_),
+            body,
+            callback
+        );
+    } else {
+        apiClient_->post(QStringLiteral("/api/v1/customers"), body, callback);
+    }
+}
+
+void CatalogWidget::cancelCustomerEdit() {
+    customerEditing_ = false;
+    editingCustomerId_ = 0;
+    editingCustomerRevision_ = 0;
+    customerEditor_->setTitle(QStringLiteral("客户信息"));
+    updateWriteAccess();
+}
+
+int CatalogWidget::selectedMaterialRow() const {
+    const auto rows = materialsTable_->selectionModel()->selectedRows();
+    if (rows.isEmpty() || rows.first().row() >= materials_.size()) {
+        return -1;
+    }
+    return rows.first().row();
+}
+
+int CatalogWidget::selectedCustomerRow() const {
+    const auto rows = customersTable_->selectionModel()->selectedRows();
+    if (rows.isEmpty() || rows.first().row() >= customers_.size()) {
+        return -1;
+    }
+    return rows.first().row();
+}
+
+QString CatalogWidget::errorText(const ApiResponse& response) const {
+    if (response.error.kind == ApiErrorKind::Network) {
+        return QStringLiteral("网络连接失败，请确认本地服务已启动。%1")
+            .arg(response.error.message.isEmpty()
+                     ? QString()
+                     : QStringLiteral("（%1）").arg(response.error.message));
+    }
+    if (response.httpStatus == 401) {
+        return QStringLiteral("登录已失效，请重新登录。");
+    }
+    if (response.httpStatus == 403) {
+        return QStringLiteral("当前账号没有执行此操作的权限。");
+    }
+    if (response.error.code == QStringLiteral("revision_conflict")) {
+        return QStringLiteral("保存失败：数据已被其他操作修改，请刷新后重试。");
+    }
+    if (response.error.code == QStringLiteral("duplicate_code")) {
+        return QStringLiteral("保存失败：物料编码已存在。");
+    }
+    if (response.error.code == QStringLiteral("invalid_request") ||
+        response.error.code == QStringLiteral("invalid_json")) {
+        return QStringLiteral("提交内容不符合要求，请检查后重试。");
+    }
+    return QStringLiteral("操作失败（%1）：%2")
+        .arg(
+            response.error.code.isEmpty() ? QStringLiteral("unknown")
+                                          : response.error.code,
+            response.error.message.isEmpty() ? QStringLiteral("未知错误")
+                                             : response.error.message
+        );
+}
+
+void CatalogWidget::setMaterialBusy(bool busy) {
+    materialBusy_ = busy;
+    const auto ready = sessionReady();
+    materialsSearchEdit_->setEnabled(ready && !busy);
+    materialsSearchButton_->setEnabled(ready && !busy);
+    materialsRefreshButton_->setEnabled(ready && !busy);
+    updateMaterialPaging();
+    updateWriteAccess();
+}
+
+void CatalogWidget::setCustomerBusy(bool busy) {
+    customerBusy_ = busy;
+    const auto ready = sessionReady();
+    customersSearchEdit_->setEnabled(ready && !busy);
+    customersSearchButton_->setEnabled(ready && !busy);
+    customersRefreshButton_->setEnabled(ready && !busy);
+    updateCustomerPaging();
+    updateWriteAccess();
+}
+
+} // namespace manage::desktop
