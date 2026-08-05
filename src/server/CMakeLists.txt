@@ -14,6 +14,7 @@ target_link_libraries(manage_server_lib
     PUBLIC
         Manage::Data
         Manage::Domain
+        Manage::Auth
         Qt6::Core
         Qt6::HttpServer
         Qt6::Network

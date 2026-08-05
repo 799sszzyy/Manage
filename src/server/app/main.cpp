@@ -1,6 +1,8 @@
+#include "manage/auth/auth_service.h"
 #include "manage/data/database_config.h"
 #include "manage/data/database_connection.h"
 #include "manage/data/migration_runner.h"
+#include "manage/data/mysql_user_repository.h"
 #include "manage/server/api_server.h"
 
 #include <QCommandLineOption>
@@ -56,6 +58,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::unique_ptr<manage::data::DatabaseConnection> databaseConnection;
+    std::shared_ptr<manage::auth::AuthService> authService;
     if (!parser.isSet(smokeTestOption)) {
         databaseConnection = std::make_unique<manage::data::DatabaseConnection>(
             manage::data::DatabaseConfig::fromEnvironment()
@@ -84,9 +87,17 @@ int main(int argc, char* argv[]) {
         if (parser.isSet(migrateOnlyOption)) {
             return 0;
         }
+
+        auto userRepository =
+            std::make_shared<manage::data::MySqlUserRepository>(
+                databaseConnection->database()
+            );
+        authService = std::make_shared<manage::auth::AuthService>(
+            std::move(userRepository)
+        );
     }
 
-    manage::server::ApiServer server;
+    manage::server::ApiServer server(std::move(authService));
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)
                                    : static_cast<quint16>(parsedPort);

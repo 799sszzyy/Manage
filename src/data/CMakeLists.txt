@@ -2,6 +2,7 @@ add_library(manage_data STATIC
     src/database_config.cpp
     src/database_connection.cpp
     src/migration_runner.cpp
+    src/mysql_user_repository.cpp
 )
 
 add_library(Manage::Data ALIAS manage_data)
@@ -16,6 +17,7 @@ target_link_libraries(manage_data
     PUBLIC
         Qt6::Core
         Qt6::Sql
+        Manage::Auth
 )
 
 qt_add_resources(manage_data "manage_migrations"
