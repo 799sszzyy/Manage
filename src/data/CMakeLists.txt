@@ -1,4 +1,6 @@
 add_library(manage_data STATIC
+    src/catalog_repository.cpp
+    src/catalog_service.cpp
     src/database_config.cpp
     src/database_connection.cpp
     src/migration_runner.cpp
