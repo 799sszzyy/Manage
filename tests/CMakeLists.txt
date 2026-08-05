@@ -15,6 +15,13 @@ if(TARGET Manage::Auth)
     target_link_libraries(manage_auth_tests PRIVATE Manage::Auth Qt6::Core)
     manage_apply_project_options(manage_auth_tests)
     add_test(NAME manage.auth.service COMMAND manage_auth_tests)
+
+    add_executable(manage_user_management_tests
+        auth/user_management_tests.cpp
+    )
+    target_link_libraries(manage_user_management_tests PRIVATE Manage::Auth Qt6::Core)
+    manage_apply_project_options(manage_user_management_tests)
+    add_test(NAME manage.auth.user_management COMMAND manage_user_management_tests)
 endif()
 
 if(TARGET Manage::Data)
@@ -189,12 +196,21 @@ if(TARGET Manage::Server)
     manage_apply_project_options(manage_quote_routes_tests)
     add_test(NAME manage.server.quote_routes COMMAND manage_quote_routes_tests)
 
+    add_executable(manage_user_routes_tests
+        server/user_routes_tests.cpp
+    )
+    target_include_directories(manage_user_routes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(manage_user_routes_tests PRIVATE Manage::Server Qt6::Core Qt6::Network)
+    manage_apply_project_options(manage_user_routes_tests)
+    add_test(NAME manage.server.user_routes COMMAND manage_user_routes_tests)
+
     add_test(NAME manage.server.smoke COMMAND manage_server --smoke-test)
     add_test(NAME manage.desktop.smoke COMMAND manage_desktop --smoke-test)
 
     set_tests_properties(
         manage.data.migrations
         manage.auth.service
+        manage.auth.user_management
         manage.data.catalog_service
         manage.data.catalog_repository_mysql
         manage.data.bom_service
@@ -206,6 +222,7 @@ if(TARGET Manage::Server)
         manage.server.catalog_routes
         manage.server.bom_routes
         manage.server.quote_routes
+        manage.server.user_routes
         manage.server.smoke
         manage.backend_e2e.self_test
         PROPERTIES
@@ -338,5 +355,18 @@ if(TARGET Manage::Desktop)
         PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
+
+    add_executable(manage_user_management_widget_tests
+        desktop/user_management_widget_tests.cpp
+    )
+    target_link_libraries(manage_user_management_widget_tests
+        PRIVATE Manage::Desktop Qt6::Core Qt6::HttpServer Qt6::Network Qt6::Widgets
+    )
+    manage_apply_project_options(manage_user_management_widget_tests)
+    add_test(NAME manage.desktop.user_management_widget COMMAND manage_user_management_widget_tests)
+    set_tests_properties(manage.desktop.user_management_widget PROPERTIES
+        ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
     )
 endif()
