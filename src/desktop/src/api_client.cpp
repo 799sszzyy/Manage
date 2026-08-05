@@ -107,6 +107,10 @@ QNetworkReply* ApiClient::patch(
     return send(Method::Patch, path, body, std::move(callback));
 }
 
+QNetworkReply* ApiClient::remove(const QString& path, Callback callback) {
+    return send(Method::Delete, path, {}, std::move(callback));
+}
+
 QNetworkReply* ApiClient::bootstrap(
     const QString& password,
     const QString& displayName,
@@ -274,6 +278,9 @@ QNetworkReply* ApiClient::send(
         break;
     case Method::Patch:
         reply = networkManager_->sendCustomRequest(request, "PATCH", payload);
+        break;
+    case Method::Delete:
+        reply = networkManager_->deleteResource(request);
         break;
     }
 
