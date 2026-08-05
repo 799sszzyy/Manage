@@ -1,6 +1,7 @@
 #include "manage/desktop/bom_quote_widget.h"
 #include "manage/desktop/catalog_widget.h"
 #include "manage/desktop/main_window.h"
+#include "manage/desktop/quote_management_widget.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -49,6 +50,10 @@ int main(int argc, char* argv[]) {
     window.addModuleTab(
         QStringLiteral("BOM 与报价"),
         new manage::desktop::BomQuoteWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("报价管理"),
+        new manage::desktop::QuoteManagementWidget(window.apiClient())
     );
     window.show();
 
