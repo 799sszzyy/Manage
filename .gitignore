@@ -20,3 +20,7 @@ Testing/
 *.exe
 aqtinstall.log
 db-migrations/*.local.sql
+# Batch 5 local verification outputs (kept on disk, never committed)
+/b/
+/b5/
+/build-b5-*/
