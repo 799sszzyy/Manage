@@ -13,6 +13,12 @@ if(MANAGE_ENABLE_QT)
     )
     manage_apply_project_options(manage_excel_workbook_tests)
     add_test(NAME manage.excel.workbook COMMAND manage_excel_workbook_tests)
+    set_tests_properties(
+        manage.excel.workbook
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+    )
 
     add_executable(manage_material_batch_tests
         data/material_batch_service_tests.cpp
@@ -24,6 +30,12 @@ if(MANAGE_ENABLE_QT)
     )
     manage_apply_project_options(manage_material_batch_tests)
     add_test(NAME manage.data.material_batch COMMAND manage_material_batch_tests)
+    set_tests_properties(
+        manage.data.material_batch
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+    )
 endif()
 
 target_link_libraries(manage_domain_tests PRIVATE Manage::Domain)
@@ -250,6 +262,22 @@ if(TARGET Manage::Server)
 
     add_test(NAME manage.server.smoke COMMAND manage_server --smoke-test)
     add_test(NAME manage.desktop.smoke COMMAND manage_desktop --smoke-test)
+    add_test(
+        NAME manage.server.lan_requires_opt_in
+        COMMAND manage_server --smoke-test --listen-address 0.0.0.0
+    )
+    set_tests_properties(
+        manage.server.lan_requires_opt_in
+        PROPERTIES WILL_FAIL TRUE
+    )
+    add_test(
+        NAME manage.server.lan_smoke
+        COMMAND manage_server --smoke-test --listen-address 0.0.0.0 --allow-lan
+    )
+    add_test(
+        NAME manage.desktop.lan_url_smoke
+        COMMAND manage_desktop --smoke-test --api-url http://192.168.1.20:18080
+    )
 
     set_tests_properties(
         manage.data.migrations
@@ -270,6 +298,8 @@ if(TARGET Manage::Server)
         manage.server.user_routes
         manage.server.statistics_routes
         manage.server.smoke
+        manage.server.lan_requires_opt_in
+        manage.server.lan_smoke
         manage.backend_e2e.self_test
         PROPERTIES
             ENVIRONMENT_MODIFICATION
@@ -277,6 +307,7 @@ if(TARGET Manage::Server)
     )
     set_tests_properties(
         manage.desktop.smoke
+        manage.desktop.lan_url_smoke
         PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"

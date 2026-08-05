@@ -16,15 +16,52 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QAbstractSocket>
 #include <QHostAddress>
+#include <QTextStream>
 #include <QTimer>
 
 #include <memory>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
+namespace {
+
+QString readDatabasePassword() {
+    QTextStream output(stdout);
+    output << "Enter the MySQL password: " << Qt::flush;
+
+#ifdef Q_OS_WIN
+    const auto inputHandle = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD originalMode = 0;
+    const auto hasConsoleMode = inputHandle != INVALID_HANDLE_VALUE &&
+                                GetConsoleMode(inputHandle, &originalMode);
+    if (hasConsoleMode) {
+        SetConsoleMode(inputHandle, originalMode & ~ENABLE_ECHO_INPUT);
+    }
+#endif
+
+    QTextStream input(stdin);
+    const auto password = input.readLine();
+
+#ifdef Q_OS_WIN
+    if (hasConsoleMode) {
+        SetConsoleMode(inputHandle, originalMode);
+    }
+#endif
+
+    output << Qt::endl;
+    return password;
+}
+
+} // namespace
+
 int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("manage-server"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.5.0"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(MANAGE_VERSION));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
@@ -35,9 +72,19 @@ int main(int argc, char* argv[]) {
 
     const QCommandLineOption portOption(
         QStringList{QStringLiteral("p"), QStringLiteral("port")},
-        QStringLiteral("TCP port; the service always binds to 127.0.0.1"),
+        QStringLiteral("TCP port"),
         QStringLiteral("port"),
         QStringLiteral("18080")
+    );
+    const QCommandLineOption listenAddressOption(
+        QStringLiteral("listen-address"),
+        QStringLiteral("IPv4 address to listen on; defaults to local-only access"),
+        QStringLiteral("address"),
+        QStringLiteral("127.0.0.1")
+    );
+    const QCommandLineOption allowLanOption(
+        QStringLiteral("allow-lan"),
+        QStringLiteral("Explicitly allow listening on a non-loopback address")
     );
     const QCommandLineOption smokeTestOption(
         QStringLiteral("smoke-test"),
@@ -47,9 +94,40 @@ int main(int argc, char* argv[]) {
         QStringLiteral("migrate-only"),
         QStringLiteral("Apply database migrations and exit")
     );
+    const QCommandLineOption databaseHostOption(
+        QStringLiteral("db-host"),
+        QStringLiteral("MySQL host; overrides MANAGE_DB_HOST"),
+        QStringLiteral("host")
+    );
+    const QCommandLineOption databasePortOption(
+        QStringLiteral("db-port"),
+        QStringLiteral("MySQL port; overrides MANAGE_DB_PORT"),
+        QStringLiteral("port")
+    );
+    const QCommandLineOption databaseNameOption(
+        QStringLiteral("db-name"),
+        QStringLiteral("MySQL database; overrides MANAGE_DB_NAME"),
+        QStringLiteral("name")
+    );
+    const QCommandLineOption databaseUserOption(
+        QStringLiteral("db-user"),
+        QStringLiteral("MySQL user; overrides MANAGE_DB_USER"),
+        QStringLiteral("user")
+    );
+    const QCommandLineOption promptDatabasePasswordOption(
+        QStringLiteral("prompt-db-password"),
+        QStringLiteral("Read the MySQL password from the visible console without echo")
+    );
     parser.addOption(portOption);
+    parser.addOption(listenAddressOption);
+    parser.addOption(allowLanOption);
     parser.addOption(smokeTestOption);
     parser.addOption(migrateOnlyOption);
+    parser.addOption(databaseHostOption);
+    parser.addOption(databasePortOption);
+    parser.addOption(databaseNameOption);
+    parser.addOption(databaseUserOption);
+    parser.addOption(promptDatabasePasswordOption);
     parser.process(application);
 
     if (parser.isSet(smokeTestOption) && parser.isSet(migrateOnlyOption)) {
@@ -64,6 +142,29 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
+    QHostAddress listenAddress;
+    const auto listenAddressText = parser.value(listenAddressOption).trimmed();
+    if (!listenAddress.setAddress(listenAddressText) ||
+        listenAddress.protocol() != QAbstractSocket::IPv4Protocol ||
+        listenAddress == QHostAddress::Broadcast || listenAddress.isMulticast()) {
+        qCritical("--listen-address must be a valid unicast IPv4 address");
+        return 2;
+    }
+    const auto lanMode = !listenAddress.isLoopback();
+    if (lanMode && !parser.isSet(allowLanOption)) {
+        qCritical(
+            "a non-loopback --listen-address requires the explicit --allow-lan flag"
+        );
+        return 2;
+    }
+    if (lanMode) {
+        qWarning(
+            "LAN mode enabled: keep port %u inside a trusted Windows network; "
+            "the built-in HTTP service does not provide TLS",
+            parsedPort
+        );
+    }
+
     std::unique_ptr<manage::data::DatabaseConnection> databaseConnection;
     std::shared_ptr<manage::auth::AuthService> authService;
     std::shared_ptr<manage::auth::UserManagementService> userManagementService;
@@ -74,8 +175,33 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<manage::data::MySqlStatisticsRepository> statisticsRepository;
     std::unique_ptr<manage::data::MaterialBatchService> materialBatchService;
     if (!parser.isSet(smokeTestOption)) {
+        // Composition root: every business service below shares this one open
+        // database connection. HTTP routes never open ad-hoc connections.
+        auto databaseConfig = manage::data::DatabaseConfig::fromEnvironment();
+        if (parser.isSet(databaseHostOption)) {
+            databaseConfig.host = parser.value(databaseHostOption);
+        }
+        if (parser.isSet(databasePortOption)) {
+            bool databasePortIsValid = false;
+            databaseConfig.port = parser.value(databasePortOption)
+                                      .toInt(&databasePortIsValid);
+            if (!databasePortIsValid) {
+                databaseConfig.port = -1;
+            }
+        }
+        if (parser.isSet(databaseNameOption)) {
+            databaseConfig.databaseName = parser.value(databaseNameOption);
+        }
+        if (parser.isSet(databaseUserOption)) {
+            databaseConfig.userName = parser.value(databaseUserOption);
+        }
+        if (parser.isSet(promptDatabasePasswordOption)) {
+            // The password remains in this process only and never appears in
+            // command history, a settings file, or console output.
+            databaseConfig.password = readDatabasePassword();
+        }
         databaseConnection = std::make_unique<manage::data::DatabaseConnection>(
-            manage::data::DatabaseConfig::fromEnvironment()
+            std::move(databaseConfig)
         );
 
         QString databaseError;
@@ -147,16 +273,17 @@ int main(int argc, char* argv[]) {
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)
                                    : static_cast<quint16>(parsedPort);
-    const auto listeningPort = server.listen(
-        QHostAddress::LocalHost,
-        requestedPort
-    );
+    const auto listeningPort = server.listen(listenAddress, requestedPort);
     if (listeningPort == 0) {
-        qCritical("Unable to listen on 127.0.0.1");
+        qCritical().noquote()
+            << QStringLiteral("Unable to listen on %1").arg(listenAddressText);
         return 1;
     }
 
-    qInfo("manage-server listening on http://127.0.0.1:%u", listeningPort);
+    qInfo().noquote()
+        << QStringLiteral("manage-server listening on http://%1:%2")
+               .arg(listenAddressText)
+               .arg(listeningPort);
 
     if (parser.isSet(smokeTestOption)) {
         QTimer::singleShot(50, &application, &QCoreApplication::quit);

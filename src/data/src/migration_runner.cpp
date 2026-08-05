@@ -337,6 +337,9 @@ bool MigrationRunner::migrate(
         parsedStatements.insert(migration.version, statements);
     }
 
+    // The advisory lock prevents two server processes from applying the same
+    // schema change concurrently. Stored checksums below also reject edited
+    // historical migrations instead of silently accepting schema drift.
     AdvisoryLock lock(database_);
     if (!lock.acquire(errorMessage) ||
         !createMigrationTable(database_, errorMessage)) {
