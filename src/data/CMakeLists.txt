@@ -5,6 +5,7 @@ add_library(manage_data STATIC
     src/database_config.cpp
     src/database_connection.cpp
     src/migration_runner.cpp
+    src/material_batch_service.cpp
     src/mysql_bom_repository.cpp
     src/mysql_quote_lifecycle.cpp
     src/mysql_user_repository.cpp

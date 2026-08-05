@@ -2,6 +2,30 @@ add_executable(manage_domain_tests
     domain/quote_calculator_tests.cpp
 )
 
+if(MANAGE_ENABLE_QT)
+    add_executable(manage_excel_workbook_tests
+        excel/workbook_service_tests.cpp
+    )
+    target_link_libraries(manage_excel_workbook_tests PRIVATE
+        Manage::Excel
+        Qt6::Core
+        QXlsx::QXlsx
+    )
+    manage_apply_project_options(manage_excel_workbook_tests)
+    add_test(NAME manage.excel.workbook COMMAND manage_excel_workbook_tests)
+
+    add_executable(manage_material_batch_tests
+        data/material_batch_service_tests.cpp
+    )
+    target_link_libraries(manage_material_batch_tests PRIVATE
+        Manage::Data
+        Qt6::Core
+        Qt6::Sql
+    )
+    manage_apply_project_options(manage_material_batch_tests)
+    add_test(NAME manage.data.material_batch COMMAND manage_material_batch_tests)
+endif()
+
 target_link_libraries(manage_domain_tests PRIVATE Manage::Domain)
 manage_apply_project_options(manage_domain_tests)
 
