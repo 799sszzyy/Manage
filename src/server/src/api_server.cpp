@@ -1,5 +1,9 @@
 #include "manage/server/api_server.h"
 
+#include "manage/server/catalog_routes.h"
+
+#include "manage/data/catalog_repository.h"
+#include "manage/data/catalog_service.h"
 #include "manage/data/database_connection.h"
 #include "manage/domain/quote_calculator.h"
 
@@ -15,6 +19,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace manage::server {
 namespace {
@@ -95,7 +100,11 @@ QString domainErrorCode(manage::domain::QuoteCalculationErrorCode code) {
 
 } // namespace
 
-ApiServer::ApiServer() : tcpServer_(new QTcpServer(&server_)) {
+ApiServer::ApiServer() : ApiServer(nullptr) {}
+
+ApiServer::ApiServer(
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository
+) : tcpServer_(new QTcpServer(&server_)) {
     server_.route(
         QStringLiteral("/api/v1/health"),
         QHttpServerRequest::Method::Get,
@@ -109,6 +118,13 @@ ApiServer::ApiServer() : tcpServer_(new QTcpServer(&server_)) {
             return calculateQuoteResponse(request);
         }
     );
+
+    if (catalogRepository != nullptr) {
+        catalogService_ = std::make_shared<manage::data::CatalogService>(
+            std::move(catalogRepository)
+        );
+        registerCatalogRoutes(server_, catalogService_);
+    }
 }
 
 quint16 ApiServer::listen(const QHostAddress& address, quint16 port) {
