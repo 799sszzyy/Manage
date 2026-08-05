@@ -1,4 +1,5 @@
 #include "manage/server/api_server.h"
+#include "manage/server/bom_routes.h"
 
 #include "manage/data/database_connection.h"
 #include "manage/domain/quote_calculator.h"
@@ -95,7 +96,8 @@ QString domainErrorCode(manage::domain::QuoteCalculationErrorCode code) {
 
 } // namespace
 
-ApiServer::ApiServer() : tcpServer_(new QTcpServer(&server_)) {
+ApiServer::ApiServer(manage::data::BomService* bomService)
+    : tcpServer_(new QTcpServer(&server_)) {
     server_.route(
         QStringLiteral("/api/v1/health"),
         QHttpServerRequest::Method::Get,
@@ -109,6 +111,8 @@ ApiServer::ApiServer() : tcpServer_(new QTcpServer(&server_)) {
             return calculateQuoteResponse(request);
         }
     );
+
+    BomRoutes::registerRoutes(server_, bomService);
 }
 
 quint16 ApiServer::listen(const QHostAddress& address, quint16 port) {

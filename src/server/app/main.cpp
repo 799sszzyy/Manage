@@ -1,6 +1,8 @@
 #include "manage/data/database_config.h"
 #include "manage/data/database_connection.h"
+#include "manage/data/bom_service.h"
 #include "manage/data/migration_runner.h"
+#include "manage/data/mysql_bom_repository.h"
 #include "manage/server/api_server.h"
 
 #include <QCommandLineOption>
@@ -56,6 +58,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::unique_ptr<manage::data::DatabaseConnection> databaseConnection;
+    std::unique_ptr<manage::data::MySqlBomRepository> bomRepository;
+    std::unique_ptr<manage::data::BomService> bomService;
     if (!parser.isSet(smokeTestOption)) {
         databaseConnection = std::make_unique<manage::data::DatabaseConnection>(
             manage::data::DatabaseConfig::fromEnvironment()
@@ -84,9 +88,14 @@ int main(int argc, char* argv[]) {
         if (parser.isSet(migrateOnlyOption)) {
             return 0;
         }
+
+        bomRepository = std::make_unique<manage::data::MySqlBomRepository>(
+            databaseConnection->database()
+        );
+        bomService = std::make_unique<manage::data::BomService>(*bomRepository);
     }
 
-    manage::server::ApiServer server;
+    manage::server::ApiServer server(bomService.get());
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)
                                    : static_cast<quint16>(parsedPort);

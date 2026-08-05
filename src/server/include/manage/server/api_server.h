@@ -7,11 +7,15 @@
 #include <QTcpServer>
 #include <QtGlobal>
 
+namespace manage::data {
+class BomService;
+}
+
 namespace manage::server {
 
 class ApiServer final {
 public:
-    ApiServer();
+    explicit ApiServer(manage::data::BomService* bomService = nullptr);
 
     quint16 listen(
         const QHostAddress& address = QHostAddress::LocalHost,
