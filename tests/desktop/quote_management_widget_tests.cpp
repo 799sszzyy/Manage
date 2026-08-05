@@ -97,8 +97,10 @@ struct TestApi final {
     int lookupCount{};
     qint64 nextId{2};
     QJsonObject lastBody;
+    QJsonObject lastCreateBody;
     QJsonObject lastUpdateBody;
     QString lastPath;
+    QString lastDeletePath;
     QString lastMethod;
     QString materialSearch;
     QJsonObject current;
@@ -175,6 +177,7 @@ struct TestApi final {
         server.route(QStringLiteral("/api/v1/quotes"), QHttpServerRequest::Method::Post,
             [this](const QHttpServerRequest& request) {
                 capture(request, QStringLiteral("POST"));
+                lastCreateBody = lastBody;
                 ++createCount;
                 current = fromPayload(nextId, QStringLiteral("Q-20260805-%1").arg(nextId), lastBody, 1);
                 ++nextId;
@@ -195,6 +198,7 @@ struct TestApi final {
         server.route(QStringLiteral("/api/v1/quotes/<arg>"), QHttpServerRequest::Method::Delete,
             [this](qint64, const QHttpServerRequest& request) {
                 capture(request, QStringLiteral("DELETE"));
+                lastDeletePath = request.url().toString();
                 ++deleteCount;
                 return QHttpServerResponse(QJsonObject{});
             });
@@ -302,11 +306,11 @@ void adminLifecycle() {
     child<QTextEdit>(widget, "quoteSavedNotesEdit")->setPlainText(QStringLiteral("新草稿"));
     child<QPushButton>(widget, "quoteSavedSaveButton")->click();
     require(waitUntil([&] { return api.createCount == 1; }), "new draft must POST");
-    require(api.lastBody.value(QStringLiteral("revision")).isUndefined(), "POST must not send revision");
-    const auto postedItem = api.lastBody.value(QStringLiteral("items")).toArray().first().toObject();
+    require(api.lastCreateBody.value(QStringLiteral("revision")).isUndefined(), "POST must not send revision");
+    const auto postedItem = api.lastCreateBody.value(QStringLiteral("items")).toArray().first().toObject();
     require(postedItem.value(QStringLiteral("quantityMicros")).toInteger() == 2'500'001, "quantity must convert to micros exactly");
     require(postedItem.value(QStringLiteral("unitPriceCents")).toInteger() == 1234, "price must convert to cents exactly");
-    require(api.lastBody.value(QStringLiteral("markupBasisPoints")).toInteger() == 2050, "percent must convert to basis points");
+    require(api.lastCreateBody.value(QStringLiteral("markupBasisPoints")).toInteger() == 2050, "percent must convert to basis points");
     require(waitUntil([&] { return child<QLabel>(widget, "quoteNumberLabel")->text() == QStringLiteral("Q-20260805-2"); }), "created detail must display");
 
     require(waitUntil([&] { return table->rowCount() == 1 && child<QPushButton>(widget, "quoteSearchButton")->isEnabled(); }), "list must refresh after create");
@@ -342,7 +346,7 @@ void adminLifecycle() {
     });
     child<QPushButton>(widget, "quoteDeleteButton")->click();
     require(waitUntil([&] { return api.deleteCount == 1; }), "confirmed draft deletion must use DELETE");
-    require(api.lastPath.contains(QStringLiteral("revision=1")), "DELETE must send revision query");
+    require(api.lastDeletePath.contains(QStringLiteral("revision=1")), "DELETE must send revision query");
 }
 
 void rolesAndTemporaryPassword() {

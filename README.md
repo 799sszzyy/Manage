@@ -4,17 +4,17 @@
 
 ## 当前完成范围
 
-工程已经建立 Qt 6 / CMake / C++17 分层结构。第三批 v0.3.0 已把登录、客户/物料、BOM 和报价核算接入同一个 Qt Widgets 主窗口。
+工程已经建立 Qt 6 / CMake / C++17 分层结构。第四批 v0.4.0 已把登录、客户/物料、BOM、临时报价核算和可保存的报价管理接入同一个 Qt Widgets 主窗口。
 
 - `src/domain`：不依赖 Qt 的领域核心，负责金额、数量、费率校验和报价计算。
 - `src/auth`：密码安全派生、登录会话和角色授权规则，不直接依赖 MySQL 或 HTTP。
-- `src/data`：数据库配置、`QMYSQL` 连接、版本化迁移和迁移完整性检查。
+- `src/data`：数据库配置、`QMYSQL` 连接、版本化迁移、迁移完整性检查和报价生命周期。
 - `src/server`：仅监听 `127.0.0.1` 的 Qt HttpServer；正常启动前会自动迁移数据库。
-- `src/desktop`：Qt Widgets 客户端，包含首次管理员初始化、登录、强制改密、客户/物料维护、BOM 维护和报价核算界面。
+- `src/desktop`：Qt Widgets 客户端，包含首次管理员初始化、登录、强制改密、客户/物料维护、BOM 维护、报价核算和报价管理界面。
 - `db-migrations`：MySQL 8.4 表结构、索引、初始角色以及建库账号模板。
-- `tests`：领域、迁移、服务接口、权限、桌面交互和应用冒烟测试。
+- `tests`：领域、迁移、服务接口、权限、桌面交互、应用冒烟和真实后端端到端测试。
 
-管理员可以维护客户、物料与 BOM，并进行报价核算；报价员可以读取基础资料并核算；查看员只能读取。当前报价页只计算并显示结果，尚未保存报价单，也未实现报价状态、历史查询和导出，这些属于后续批次。
+管理员和报价员可以新建、修改、发布、复制、作废报价以及删除草稿；查看员只能查询。报价保存时会冻结客户和物料快照，并使用 `revision` 防止两次编辑互相覆盖。Excel 导出、用户账号管理和统计报表属于后续批次。
 
 核算使用整数定点数，避免浮点金额误差：金额单位为分、数量精确到百万分之一，加价率和税率使用基点（100 基点 = 1%）。每条物料小计以及每次百分比计算均四舍五入到分。
 
@@ -35,7 +35,7 @@ ctest --test-dir build-local -C Release --output-on-failure
 .\build-local\Release\manage-desktop.exe --smoke-test
 ```
 
-正常使用时先启动服务端，再启动桌面端；两者默认连接 `127.0.0.1:18080`。第三批并行验收专用端口是 `18083`，版本和端口记录见 [`docs/release-matrix.md`](docs/release-matrix.md)。
+正常使用时先启动服务端，再启动桌面端；两者默认连接 `127.0.0.1:18080`。第四批并行验收专用端口是 `18084`，版本和端口记录见 [`docs/release-matrix.md`](docs/release-matrix.md)。
 
 ## MySQL 首次配置
 
@@ -84,7 +84,10 @@ $env:MANAGE_DB_PASSWORD = '这里填写刚才设置的密码'
 - `/api/v1/materials`：物料分页查询、新增和更新；`/{id}/enabled` 切换启用状态。
 - `/api/v1/customers`：客户分页查询、新增和更新。
 - `/api/v1/boms`：BOM 分页查询、新增、更新和详情；`/{id}/items` 替换明细，`/{id}/enabled` 切换启用状态。
-- `POST /api/v1/quotes/calculate`
+- `POST /api/v1/quotes/calculate`：不保存的临时报价核算。
+- `/api/v1/quotes`：报价分页查询、新建和草稿修改；`/{id}` 查询详情或删除草稿。
+- `/api/v1/quotes/{id}/status`：把草稿发布或把已发布报价作废。
+- `/api/v1/quotes/{id}/clone`：复制任意状态报价为新的草稿。
 
 核算接口使用 `quantityMicros`、`unitPriceCents`、`freightCents`、`otherFeesCents`、`markupBasisPoints` 和 `taxBasisPoints` 等整数 JSON 字段。
 
@@ -103,4 +106,4 @@ Invoke-RestMethod `
     -Body $bootstrapBody
 ```
 
-之后使用 `admin` 和刚设置的临时密码登录，桌面端会要求立即设置正式密码。新密码生效后才能使用普通业务功能。客户、物料和 BOM 接口已接入 `admin`、`quoter`、`viewer` 的角色限制；桌面端也会按角色隐藏或禁用不可执行的操作。
+之后使用 `admin` 和刚设置的临时密码登录，桌面端会要求立即设置正式密码。新密码生效后才能使用普通业务功能。客户、物料、BOM 和报价接口均已接入 `admin`、`quoter`、`viewer` 的角色限制；桌面端也会按角色隐藏或禁用不可执行的操作。
