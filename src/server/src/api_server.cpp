@@ -1,6 +1,10 @@
 #include "manage/server/api_server.h"
 
 #include "manage/auth/auth_service.h"
+#include "manage/server/catalog_routes.h"
+
+#include "manage/data/catalog_repository.h"
+#include "manage/data/catalog_service.h"
 #include "manage/data/database_connection.h"
 #include "manage/domain/quote_calculator.h"
 
@@ -165,11 +169,20 @@ QString domainErrorCode(manage::domain::QuoteCalculationErrorCode code) {
 
 } // namespace
 
-ApiServer::ApiServer() : ApiServer(nullptr) {}
+ApiServer::ApiServer() : ApiServer(nullptr, nullptr) {}
 
 ApiServer::ApiServer(std::shared_ptr<manage::auth::AuthService> authService)
-    : tcpServer_(new QTcpServer(&server_)),
-      authService_(std::move(authService)) {
+    : ApiServer(std::move(authService), nullptr) {}
+
+ApiServer::ApiServer(
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository
+) : ApiServer(nullptr, std::move(catalogRepository)) {}
+
+ApiServer::ApiServer(
+    std::shared_ptr<manage::auth::AuthService> authService,
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository
+) : tcpServer_(new QTcpServer(&server_)),
+    authService_(std::move(authService)) {
     server_.route(
         QStringLiteral("/api/v1/health"),
         QHttpServerRequest::Method::Get,
@@ -223,6 +236,13 @@ ApiServer::ApiServer(std::shared_ptr<manage::auth::AuthService> authService)
             return changePasswordResponse(request);
         }
     );
+
+    if (catalogRepository != nullptr) {
+        catalogService_ = std::make_shared<manage::data::CatalogService>(
+            std::move(catalogRepository)
+        );
+        registerCatalogRoutes(server_, catalogService_);
+    }
 }
 
 quint16 ApiServer::listen(const QHostAddress& address, quint16 port) {

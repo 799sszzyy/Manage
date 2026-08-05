@@ -13,12 +13,24 @@ namespace manage::auth {
 class AuthService;
 }
 
+namespace manage::data {
+class CatalogRepository;
+class CatalogService;
+}
+
 namespace manage::server {
 
 class ApiServer final {
 public:
     ApiServer();
     explicit ApiServer(std::shared_ptr<manage::auth::AuthService> authService);
+    explicit ApiServer(
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository
+    );
 
     quint16 listen(
         const QHostAddress& address = QHostAddress::LocalHost,
@@ -43,6 +55,7 @@ private:
     QHttpServer server_;
     QTcpServer* tcpServer_{};
     std::shared_ptr<manage::auth::AuthService> authService_;
+    std::shared_ptr<manage::data::CatalogService> catalogService_;
 };
 
 } // namespace manage::server

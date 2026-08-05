@@ -31,6 +31,30 @@ if(TARGET Manage::Data)
     manage_apply_project_options(manage_data_tests)
 
     add_test(NAME manage.data.migrations COMMAND manage_data_tests)
+
+    add_executable(manage_catalog_service_tests
+        data/catalog_service_tests.cpp
+    )
+    target_include_directories(manage_catalog_service_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(manage_catalog_service_tests PRIVATE Manage::Data Qt6::Core)
+    manage_apply_project_options(manage_catalog_service_tests)
+    add_test(NAME manage.data.catalog_service COMMAND manage_catalog_service_tests)
+
+    add_executable(manage_catalog_mysql_tests
+        data/catalog_repository_mysql_tests.cpp
+    )
+    target_link_libraries(
+        manage_catalog_mysql_tests
+        PRIVATE
+            Manage::Data
+            Qt6::Core
+            Qt6::Sql
+    )
+    manage_apply_project_options(manage_catalog_mysql_tests)
+    add_test(
+        NAME manage.data.catalog_repository_mysql
+        COMMAND manage_catalog_mysql_tests
+    )
 endif()
 
 if(TARGET Manage::Server)
@@ -48,6 +72,20 @@ if(TARGET Manage::Server)
     manage_apply_project_options(manage_server_tests)
 
     add_test(NAME manage.server.api COMMAND manage_server_tests)
+
+    add_executable(manage_catalog_routes_tests
+        server/catalog_routes_tests.cpp
+    )
+    target_include_directories(manage_catalog_routes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(
+        manage_catalog_routes_tests
+        PRIVATE
+            Manage::Server
+            Qt6::Core
+            Qt6::Network
+    )
+    manage_apply_project_options(manage_catalog_routes_tests)
+    add_test(NAME manage.server.catalog_routes COMMAND manage_catalog_routes_tests)
     add_test(NAME manage.server.smoke COMMAND manage_server --smoke-test)
     add_test(NAME manage.desktop.smoke COMMAND manage_desktop --smoke-test)
 
@@ -55,6 +93,9 @@ if(TARGET Manage::Server)
         manage.data.migrations
         manage.auth.service
         manage.server.api
+        manage.server.catalog_routes
+        manage.data.catalog_service
+        manage.data.catalog_repository_mysql
         manage.server.smoke
         PROPERTIES
             ENVIRONMENT_MODIFICATION
