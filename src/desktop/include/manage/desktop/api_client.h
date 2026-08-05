@@ -86,6 +86,7 @@ public:
         const QJsonObject& body,
         Callback callback
     );
+    QNetworkReply* remove(const QString& path, Callback callback);
 
     QNetworkReply* bootstrap(
         const QString& password,
@@ -109,7 +110,7 @@ signals:
     void sessionChanged(bool authenticated);
 
 private:
-    enum class Method { Get, Post, Put, Patch };
+    enum class Method { Get, Post, Put, Patch, Delete };
 
     QNetworkReply* send(
         Method method,
