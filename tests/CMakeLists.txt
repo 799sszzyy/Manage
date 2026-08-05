@@ -379,6 +379,28 @@ if(TARGET Manage::Desktop)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
     )
 
+    add_executable(manage_bom_drag_widgets_tests
+        desktop/bom_drag_widgets_tests.cpp
+    )
+    target_link_libraries(
+        manage_bom_drag_widgets_tests
+        PRIVATE
+            Manage::Desktop
+            Qt6::Core
+            Qt6::Widgets
+    )
+    manage_apply_project_options(manage_bom_drag_widgets_tests)
+    add_test(
+        NAME manage.desktop.bom_drag_widgets
+        COMMAND manage_bom_drag_widgets_tests
+    )
+    set_tests_properties(
+        manage.desktop.bom_drag_widgets
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
+
     add_executable(manage_quote_management_widget_tests
         desktop/quote_management_widget_tests.cpp
     )
