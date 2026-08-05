@@ -1,5 +1,6 @@
 #include "manage/server/api_server.h"
 
+#include "manage/auth/auth_service.h"
 #include "manage/data/database_connection.h"
 #include "manage/domain/quote_calculator.h"
 
@@ -15,6 +16,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace manage::server {
 namespace {
@@ -39,6 +41,74 @@ QHttpServerResponse errorResponse(
         },
         status
     );
+}
+
+StatusCode authStatusCode(manage::auth::AuthErrorCode code) {
+    using ErrorCode = manage::auth::AuthErrorCode;
+    switch (code) {
+    case ErrorCode::InvalidRequest:
+        return StatusCode::BadRequest;
+    case ErrorCode::BootstrapUnavailable:
+        return StatusCode::Conflict;
+    case ErrorCode::InvalidCredentials:
+    case ErrorCode::Unauthorized:
+    case ErrorCode::SessionExpired:
+        return StatusCode::Unauthorized;
+    case ErrorCode::AccountDisabled:
+    case ErrorCode::PasswordChangeRequired:
+    case ErrorCode::Forbidden:
+        return StatusCode::Forbidden;
+    case ErrorCode::RepositoryFailure:
+        return StatusCode::InternalServerError;
+    case ErrorCode::None:
+        return StatusCode::Ok;
+    }
+    return StatusCode::InternalServerError;
+}
+
+QHttpServerResponse authErrorResponse(const manage::auth::AuthResult& result) {
+    return errorResponse(
+        manage::auth::authErrorCode(result.error),
+        result.message,
+        authStatusCode(result.error)
+    );
+}
+
+QJsonObject userJson(const manage::auth::AuthenticatedUser& user) {
+    return {
+        {QStringLiteral("id"), jsonInteger(static_cast<qint64>(user.id))},
+        {QStringLiteral("username"), user.username},
+        {QStringLiteral("displayName"), user.displayName},
+        {QStringLiteral("role"), manage::auth::roleCode(user.role)},
+        {QStringLiteral("mustChangePassword"), user.mustChangePassword},
+    };
+}
+
+QString bearerToken(const QHttpServerRequest& request) {
+    const auto authorization = request.value("Authorization").trimmed();
+    constexpr auto prefix = "Bearer ";
+    if (!authorization.startsWith(prefix)) {
+        return {};
+    }
+    return QString::fromLatin1(authorization.mid(sizeof(prefix) - 1)).trimmed();
+}
+
+bool parseObjectBody(
+    const QHttpServerRequest& request,
+    QJsonObject* object,
+    QHttpServerResponse* failureResponse
+) {
+    QJsonParseError parseError;
+    const auto document = QJsonDocument::fromJson(request.body(), &parseError);
+    if (parseError.error == QJsonParseError::NoError && document.isObject()) {
+        *object = document.object();
+        return true;
+    }
+    *failureResponse = errorResponse(
+        QStringLiteral("invalid_json"),
+        QStringLiteral("request body must be a JSON object")
+    );
+    return false;
 }
 
 bool readInteger(
@@ -95,7 +165,11 @@ QString domainErrorCode(manage::domain::QuoteCalculationErrorCode code) {
 
 } // namespace
 
-ApiServer::ApiServer() : tcpServer_(new QTcpServer(&server_)) {
+ApiServer::ApiServer() : ApiServer(nullptr) {}
+
+ApiServer::ApiServer(std::shared_ptr<manage::auth::AuthService> authService)
+    : tcpServer_(new QTcpServer(&server_)),
+      authService_(std::move(authService)) {
     server_.route(
         QStringLiteral("/api/v1/health"),
         QHttpServerRequest::Method::Get,
@@ -107,6 +181,46 @@ ApiServer::ApiServer() : tcpServer_(new QTcpServer(&server_)) {
         QHttpServerRequest::Method::Post,
         [this](const QHttpServerRequest& request) {
             return calculateQuoteResponse(request);
+        }
+    );
+
+    server_.route(
+        QStringLiteral("/api/v1/auth/bootstrap"),
+        QHttpServerRequest::Method::Post,
+        [this](const QHttpServerRequest& request) {
+            return bootstrapResponse(request);
+        }
+    );
+
+    server_.route(
+        QStringLiteral("/api/v1/auth/login"),
+        QHttpServerRequest::Method::Post,
+        [this](const QHttpServerRequest& request) {
+            return loginResponse(request);
+        }
+    );
+
+    server_.route(
+        QStringLiteral("/api/v1/auth/logout"),
+        QHttpServerRequest::Method::Post,
+        [this](const QHttpServerRequest& request) {
+            return logoutResponse(request);
+        }
+    );
+
+    server_.route(
+        QStringLiteral("/api/v1/auth/me"),
+        QHttpServerRequest::Method::Get,
+        [this](const QHttpServerRequest& request) {
+            return meResponse(request);
+        }
+    );
+
+    server_.route(
+        QStringLiteral("/api/v1/auth/change-password"),
+        QHttpServerRequest::Method::Post,
+        [this](const QHttpServerRequest& request) {
+            return changePasswordResponse(request);
         }
     );
 }
@@ -303,6 +417,167 @@ QHttpServerResponse ApiServer::calculateQuoteResponse(
         }
         return QHttpServerResponse(response, StatusCode::BadRequest);
     }
+}
+
+QHttpServerResponse ApiServer::bootstrapResponse(
+    const QHttpServerRequest& request
+) const {
+    if (!authService_) {
+        return errorResponse(
+            QStringLiteral("auth_unavailable"),
+            QStringLiteral("authentication service is unavailable"),
+            StatusCode::ServiceUnavailable
+        );
+    }
+
+    QJsonObject object;
+    QHttpServerResponse failureResponse(StatusCode::BadRequest);
+    if (!parseObjectBody(request, &object, &failureResponse)) {
+        return failureResponse;
+    }
+    if (!object.value(QStringLiteral("password")).isString() ||
+        (object.contains(QStringLiteral("displayName")) &&
+         !object.value(QStringLiteral("displayName")).isString())) {
+        return errorResponse(
+            QStringLiteral("invalid_request"),
+            QStringLiteral("password must be a string and displayName must be a string")
+        );
+    }
+
+    const auto result = authService_->bootstrapAdministrator(
+        object.value(QStringLiteral("password")).toString(),
+        object.value(QStringLiteral("displayName"))
+            .toString(QStringLiteral("初始管理员"))
+    );
+    if (!result.succeeded()) {
+        return authErrorResponse(result);
+    }
+    return QHttpServerResponse(
+        QJsonObject{{QStringLiteral("user"), userJson(result.session.user)}},
+        StatusCode::Created
+    );
+}
+
+QHttpServerResponse ApiServer::loginResponse(
+    const QHttpServerRequest& request
+) const {
+    if (!authService_) {
+        return errorResponse(
+            QStringLiteral("auth_unavailable"),
+            QStringLiteral("authentication service is unavailable"),
+            StatusCode::ServiceUnavailable
+        );
+    }
+
+    QJsonObject object;
+    QHttpServerResponse failureResponse(StatusCode::BadRequest);
+    if (!parseObjectBody(request, &object, &failureResponse)) {
+        return failureResponse;
+    }
+    if (!object.value(QStringLiteral("username")).isString() ||
+        !object.value(QStringLiteral("password")).isString()) {
+        return errorResponse(
+            QStringLiteral("invalid_request"),
+            QStringLiteral("username and password must be strings")
+        );
+    }
+
+    const auto result = authService_->login(
+        object.value(QStringLiteral("username")).toString(),
+        object.value(QStringLiteral("password")).toString()
+    );
+    if (!result.succeeded()) {
+        return authErrorResponse(result);
+    }
+    return QHttpServerResponse(QJsonObject{
+        {QStringLiteral("accessToken"), result.session.accessToken},
+        {QStringLiteral("tokenType"), QStringLiteral("Bearer")},
+        {
+            QStringLiteral("expiresAt"),
+            result.session.expiresAtUtc.toString(Qt::ISODateWithMs)
+        },
+        {QStringLiteral("user"), userJson(result.session.user)},
+    });
+}
+
+QHttpServerResponse ApiServer::logoutResponse(
+    const QHttpServerRequest& request
+) const {
+    if (!authService_) {
+        return errorResponse(
+            QStringLiteral("auth_unavailable"),
+            QStringLiteral("authentication service is unavailable"),
+            StatusCode::ServiceUnavailable
+        );
+    }
+    const auto result = authService_->logout(bearerToken(request));
+    if (!result.succeeded()) {
+        return authErrorResponse(result);
+    }
+    return QHttpServerResponse(QJsonObject{
+        {QStringLiteral("status"), QStringLiteral("logged_out")},
+    });
+}
+
+QHttpServerResponse ApiServer::meResponse(
+    const QHttpServerRequest& request
+) const {
+    if (!authService_) {
+        return errorResponse(
+            QStringLiteral("auth_unavailable"),
+            QStringLiteral("authentication service is unavailable"),
+            StatusCode::ServiceUnavailable
+        );
+    }
+    const auto result = authService_->currentUser(bearerToken(request));
+    if (!result.succeeded()) {
+        return authErrorResponse(result);
+    }
+    return QHttpServerResponse(QJsonObject{
+        {QStringLiteral("user"), userJson(result.session.user)},
+        {
+            QStringLiteral("expiresAt"),
+            result.session.expiresAtUtc.toString(Qt::ISODateWithMs)
+        },
+    });
+}
+
+QHttpServerResponse ApiServer::changePasswordResponse(
+    const QHttpServerRequest& request
+) const {
+    if (!authService_) {
+        return errorResponse(
+            QStringLiteral("auth_unavailable"),
+            QStringLiteral("authentication service is unavailable"),
+            StatusCode::ServiceUnavailable
+        );
+    }
+
+    QJsonObject object;
+    QHttpServerResponse failureResponse(StatusCode::BadRequest);
+    if (!parseObjectBody(request, &object, &failureResponse)) {
+        return failureResponse;
+    }
+    if (!object.value(QStringLiteral("currentPassword")).isString() ||
+        !object.value(QStringLiteral("newPassword")).isString()) {
+        return errorResponse(
+            QStringLiteral("invalid_request"),
+            QStringLiteral("currentPassword and newPassword must be strings")
+        );
+    }
+
+    const auto result = authService_->changePassword(
+        bearerToken(request),
+        object.value(QStringLiteral("currentPassword")).toString(),
+        object.value(QStringLiteral("newPassword")).toString()
+    );
+    if (!result.succeeded()) {
+        return authErrorResponse(result);
+    }
+    return QHttpServerResponse(QJsonObject{
+        {QStringLiteral("status"), QStringLiteral("password_changed")},
+        {QStringLiteral("user"), userJson(result.session.user)},
+    });
 }
 
 } // namespace manage::server
