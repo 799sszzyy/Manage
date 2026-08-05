@@ -32,7 +32,7 @@ struct StatisticsSummary final {
     qint64 averageCents{};
     qint64 issuedCount{};
     qint64 voidCount{};
-    double issuedRate{};
+    double publishedRate{};
 };
 
 struct StatisticsRow final {
