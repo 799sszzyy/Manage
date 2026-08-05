@@ -1,5 +1,8 @@
 #include "manage/server/api_server.h"
 
+#include "manage/auth/auth_service.h"
+
+#include "support/fake_user_repository.h"
 #include "support/in_memory_catalog_repository.h"
 
 #include <QCoreApplication>
@@ -13,6 +16,7 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -66,15 +70,29 @@ NetworkResponse sendJson(
     quint16 port,
     const QByteArray& method,
     const QString& path,
-    const QJsonObject& object
+    const QJsonObject& object,
+    const QByteArray& bearerToken = {}
 ) {
     QNetworkRequest request(endpoint(port, path));
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    if (!bearerToken.isEmpty()) {
+        request.setRawHeader("Authorization", "Bearer " + bearerToken);
+    }
     return waitForReply(network.sendCustomRequest(
         request,
         method,
         QJsonDocument(object).toJson(QJsonDocument::Compact)
     ));
+}
+
+QNetworkRequest authorizedRequest(
+    quint16 port,
+    const QString& path,
+    const QByteArray& bearerToken
+) {
+    QNetworkRequest request(endpoint(port, path));
+    request.setRawHeader("Authorization", "Bearer " + bearerToken);
+    return request;
 }
 
 QJsonObject materialPayload() {
@@ -86,10 +104,14 @@ QJsonObject materialPayload() {
     };
 }
 
-void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
+void runCatalogRouteScenario(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& bearerToken
+) {
     const auto created = sendJson(
         network, port, QByteArrayLiteral("POST"),
-        QStringLiteral("/api/v1/materials"), materialPayload()
+        QStringLiteral("/api/v1/materials"), materialPayload(), bearerToken
     );
     require(created.status == 201, "material create must return HTTP 201");
     const auto createdObject = QJsonDocument::fromJson(created.body).object();
@@ -102,10 +124,11 @@ void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
     require(createdObject.value(QStringLiteral("category")).toString().isEmpty(),
             "omitted material category becomes an empty string");
 
-    const auto listed = waitForReply(network.get(QNetworkRequest(endpoint(
+    const auto listed = waitForReply(network.get(authorizedRequest(
         port,
-        QStringLiteral("/api/v1/materials?search=REST&page=1&pageSize=10&enabled=true")
-    ))));
+        QStringLiteral("/api/v1/materials?search=REST&page=1&pageSize=10&enabled=true"),
+        bearerToken
+    )));
     require(listed.status == 200, "material list must return HTTP 200");
     const auto listObject = QJsonDocument::fromJson(listed.body).object();
     require(listObject.value(QStringLiteral("total")).toInteger() == 1,
@@ -119,7 +142,7 @@ void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
         QJsonObject{
             {QStringLiteral("revision"), 1},
             {QStringLiteral("isEnabled"), false},
-        }
+        }, bearerToken
     );
     require(disabled.status == 200, "material disable must return HTTP 200");
     const auto disabledObject = QJsonDocument::fromJson(disabled.body).object();
@@ -133,7 +156,8 @@ void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
     stalePayload.insert(QStringLiteral("name"), QStringLiteral("stale update"));
     const auto stale = sendJson(
         network, port, QByteArrayLiteral("PUT"),
-        QStringLiteral("/api/v1/materials/%1").arg(materialId), stalePayload
+        QStringLiteral("/api/v1/materials/%1").arg(materialId), stalePayload,
+        bearerToken
     );
     require(stale.status == 409, "stale material update must return HTTP 409");
     const auto staleObject = QJsonDocument::fromJson(stale.body).object();
@@ -146,7 +170,7 @@ void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
     };
     const auto customerCreated = sendJson(
         network, port, QByteArrayLiteral("POST"),
-        QStringLiteral("/api/v1/customers"), customer
+        QStringLiteral("/api/v1/customers"), customer, bearerToken
     );
     require(customerCreated.status == 201, "customer create must return HTTP 201");
     const auto customerObject = QJsonDocument::fromJson(customerCreated.body).object();
@@ -161,7 +185,8 @@ void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
     customerUpdate.insert(QStringLiteral("phone"), QStringLiteral("654321"));
     const auto customerUpdated = sendJson(
         network, port, QByteArrayLiteral("PUT"),
-        QStringLiteral("/api/v1/customers/%1").arg(customerId), customerUpdate
+        QStringLiteral("/api/v1/customers/%1").arg(customerId), customerUpdate,
+        bearerToken
     );
     require(customerUpdated.status == 200, "customer update must return HTTP 200");
     const auto updatedObject = QJsonDocument::fromJson(customerUpdated.body).object();
@@ -170,18 +195,146 @@ void runCatalogRouteScenario(QNetworkAccessManager& network, quint16 port) {
     require(updatedObject.value(QStringLiteral("revision")).toInteger() == 2,
             "customer revision increments");
 
-    const auto missing = waitForReply(network.get(QNetworkRequest(endpoint(
-        port, QStringLiteral("/api/v1/customers/999")
-    ))));
+    const auto missing = waitForReply(network.get(authorizedRequest(
+        port, QStringLiteral("/api/v1/customers/999"), bearerToken
+    )));
     require(missing.status == 404, "missing customer must return HTTP 404");
+}
+
+QString responseError(const NetworkResponse& response) {
+    return QJsonDocument::fromJson(response.body)
+        .object()
+        .value(QStringLiteral("error"))
+        .toString();
+}
+
+void authorizationRulesProtectCatalog(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const std::shared_ptr<manage::auth::AuthService>& authService,
+    const std::shared_ptr<manage::tests::FakeUserRepository>& userRepository
+) {
+    const auto bootstrap = authService->bootstrapAdministrator(
+        QStringLiteral("Correct Horse Battery 1"),
+        QStringLiteral("Test administrator")
+    );
+    require(bootstrap.succeeded(), "test administrator bootstrap");
+
+    const auto login = authService->login(
+        QStringLiteral("admin"),
+        QStringLiteral("Correct Horse Battery 1")
+    );
+    require(login.succeeded(), "test administrator login");
+    const auto token = login.session.accessToken.toLatin1();
+
+    auto response = waitForReply(network.get(QNetworkRequest(endpoint(
+        port, QStringLiteral("/api/v1/materials")
+    ))));
+    require(response.status == 401, "catalog request without token returns 401");
+    require(responseError(response) == QStringLiteral("unauthorized"),
+            "missing token has unauthorized error code");
+
+    response = waitForReply(network.get(authorizedRequest(
+        port, QStringLiteral("/api/v1/materials"), QByteArrayLiteral("wrong-token")
+    )));
+    require(response.status == 401, "catalog request with wrong token returns 401");
+
+    response = waitForReply(network.get(authorizedRequest(
+        port, QStringLiteral("/api/v1/materials"), token
+    )));
+    require(response.status == 403,
+            "temporary-password session cannot access catalog");
+    require(responseError(response) == QStringLiteral("password_change_required"),
+            "temporary-password rejection has stable error code");
+
+    const auto changed = authService->changePassword(
+        login.session.accessToken,
+        QStringLiteral("Correct Horse Battery 1"),
+        QStringLiteral("Replaced Horse Battery 2")
+    );
+    require(changed.succeeded(), "test administrator password change");
+
+    userRepository->setRole(manage::auth::UserRole::Viewer);
+    response = waitForReply(network.get(authorizedRequest(
+        port, QStringLiteral("/api/v1/materials"), token
+    )));
+    require(response.status == 200, "viewer can read catalog");
+
+    response = sendJson(
+        network,
+        port,
+        QByteArrayLiteral("POST"),
+        QStringLiteral("/api/v1/materials"),
+        materialPayload(),
+        token
+    );
+    require(response.status == 403, "viewer cannot create catalog data");
+    require(responseError(response) == QStringLiteral("forbidden"),
+            "role rejection has forbidden error code");
+
+    userRepository->setRole(manage::auth::UserRole::Admin);
+    runCatalogRouteScenario(network, port, token);
+
+    const auto logout = authService->logout(login.session.accessToken);
+    require(logout.succeeded(), "test administrator logout");
+    response = waitForReply(network.get(authorizedRequest(
+        port, QStringLiteral("/api/v1/materials"), token
+    )));
+    require(response.status == 401, "logged-out token cannot access catalog");
+}
+
+void expiredTokenIsRejected(QNetworkAccessManager& network) {
+    auto userRepository =
+        std::make_shared<manage::tests::FakeUserRepository>();
+    auto authService = std::make_shared<manage::auth::AuthService>(
+        userRepository,
+        manage::auth::PasswordHasher(
+            manage::auth::PasswordHasher::kMinimumIterations
+        ),
+        std::chrono::seconds(0)
+    );
+    require(
+        authService->bootstrapAdministrator(
+            QStringLiteral("Correct Horse Battery 3"),
+            QStringLiteral("Expiring administrator")
+        ).succeeded(),
+        "expiring administrator bootstrap"
+    );
+    const auto login = authService->login(
+        QStringLiteral("admin"),
+        QStringLiteral("Correct Horse Battery 3")
+    );
+    require(login.succeeded(), "expiring administrator login");
+
+    auto catalogRepository = std::make_shared<InMemoryCatalogRepository>();
+    manage::server::ApiServer server(authService, catalogRepository);
+    const auto port = server.listen(QHostAddress::LocalHost, 0);
+    require(port != 0, "expired-session test server starts");
+
+    const auto response = waitForReply(network.get(authorizedRequest(
+        port,
+        QStringLiteral("/api/v1/materials"),
+        login.session.accessToken.toLatin1()
+    )));
+    require(response.status == 401, "expired token returns HTTP 401");
+    require(responseError(response) == QStringLiteral("session_expired"),
+            "expired token has stable error code");
 }
 
 } // namespace
 
 int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
-    auto repository = std::make_shared<InMemoryCatalogRepository>();
-    manage::server::ApiServer server(repository);
+    auto userRepository =
+        std::make_shared<manage::tests::FakeUserRepository>();
+    auto authService = std::make_shared<manage::auth::AuthService>(
+        userRepository,
+        manage::auth::PasswordHasher(
+            manage::auth::PasswordHasher::kMinimumIterations
+        )
+    );
+    auto catalogRepository = std::make_shared<InMemoryCatalogRepository>();
+    manage::server::ApiServer server(authService, catalogRepository);
     const auto port = server.listen(QHostAddress::LocalHost, 0);
     if (port == 0) {
         std::cerr << "[FAIL] unable to start catalog route test server\n";
@@ -190,8 +343,15 @@ int main(int argc, char* argv[]) {
 
     QNetworkAccessManager network;
     try {
-        runCatalogRouteScenario(network, port);
-        std::cout << "[PASS] catalog REST lifecycle and errors\n";
+        authorizationRulesProtectCatalog(
+            network,
+            port,
+            authService,
+            userRepository
+        );
+        std::cout << "[PASS] catalog authorization and REST lifecycle\n";
+        expiredTokenIsRejected(network);
+        std::cout << "[PASS] expired catalog session rejection\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] catalog routes: " << error.what() << '\n';

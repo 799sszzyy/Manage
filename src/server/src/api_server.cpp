@@ -3,6 +3,7 @@
 
 #include "manage/auth/auth_service.h"
 #include "manage/server/catalog_routes.h"
+#include "manage/server/http_authorization.h"
 
 #include "manage/data/catalog_repository.h"
 #include "manage/data/catalog_service.h"
@@ -48,37 +49,6 @@ QHttpServerResponse errorResponse(
     );
 }
 
-StatusCode authStatusCode(manage::auth::AuthErrorCode code) {
-    using ErrorCode = manage::auth::AuthErrorCode;
-    switch (code) {
-    case ErrorCode::InvalidRequest:
-        return StatusCode::BadRequest;
-    case ErrorCode::BootstrapUnavailable:
-        return StatusCode::Conflict;
-    case ErrorCode::InvalidCredentials:
-    case ErrorCode::Unauthorized:
-    case ErrorCode::SessionExpired:
-        return StatusCode::Unauthorized;
-    case ErrorCode::AccountDisabled:
-    case ErrorCode::PasswordChangeRequired:
-    case ErrorCode::Forbidden:
-        return StatusCode::Forbidden;
-    case ErrorCode::RepositoryFailure:
-        return StatusCode::InternalServerError;
-    case ErrorCode::None:
-        return StatusCode::Ok;
-    }
-    return StatusCode::InternalServerError;
-}
-
-QHttpServerResponse authErrorResponse(const manage::auth::AuthResult& result) {
-    return errorResponse(
-        manage::auth::authErrorCode(result.error),
-        result.message,
-        authStatusCode(result.error)
-    );
-}
-
 QJsonObject userJson(const manage::auth::AuthenticatedUser& user) {
     return {
         {QStringLiteral("id"), jsonInteger(static_cast<qint64>(user.id))},
@@ -87,15 +57,6 @@ QJsonObject userJson(const manage::auth::AuthenticatedUser& user) {
         {QStringLiteral("role"), manage::auth::roleCode(user.role)},
         {QStringLiteral("mustChangePassword"), user.mustChangePassword},
     };
-}
-
-QString bearerToken(const QHttpServerRequest& request) {
-    const auto authorization = request.value("Authorization").trimmed();
-    constexpr auto prefix = "Bearer ";
-    if (!authorization.startsWith(prefix)) {
-        return {};
-    }
-    return QString::fromLatin1(authorization.mid(sizeof(prefix) - 1)).trimmed();
 }
 
 bool parseObjectBody(
@@ -251,10 +212,10 @@ ApiServer::ApiServer(
         catalogService_ = std::make_shared<manage::data::CatalogService>(
             std::move(catalogRepository)
         );
-        registerCatalogRoutes(server_, catalogService_);
+        registerCatalogRoutes(server_, catalogService_, authService_);
     }
 
-    BomRoutes::registerRoutes(server_, bomService);
+    BomRoutes::registerRoutes(server_, bomService, authService_);
 }
 
 quint16 ApiServer::listen(const QHostAddress& address, quint16 port) {
@@ -293,6 +254,17 @@ QHttpServerResponse ApiServer::healthResponse() const {
 QHttpServerResponse ApiServer::calculateQuoteResponse(
     const QHttpServerRequest& request
 ) const {
+    if (auto failure = HttpAuthorization::require(
+            request,
+            authService_,
+            {
+                manage::auth::UserRole::Admin,
+                manage::auth::UserRole::Quoter,
+            }
+        )) {
+        return std::move(*failure);
+    }
+
     QJsonParseError parseError;
     const auto document = QJsonDocument::fromJson(request.body(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
@@ -482,7 +454,7 @@ QHttpServerResponse ApiServer::bootstrapResponse(
             .toString(QStringLiteral("初始管理员"))
     );
     if (!result.succeeded()) {
-        return authErrorResponse(result);
+        return HttpAuthorization::errorResponse(result);
     }
     return QHttpServerResponse(
         QJsonObject{{QStringLiteral("user"), userJson(result.session.user)}},
@@ -519,7 +491,7 @@ QHttpServerResponse ApiServer::loginResponse(
         object.value(QStringLiteral("password")).toString()
     );
     if (!result.succeeded()) {
-        return authErrorResponse(result);
+        return HttpAuthorization::errorResponse(result);
     }
     return QHttpServerResponse(QJsonObject{
         {QStringLiteral("accessToken"), result.session.accessToken},
@@ -542,9 +514,11 @@ QHttpServerResponse ApiServer::logoutResponse(
             StatusCode::ServiceUnavailable
         );
     }
-    const auto result = authService_->logout(bearerToken(request));
+    const auto result = authService_->logout(
+        HttpAuthorization::bearerToken(request)
+    );
     if (!result.succeeded()) {
-        return authErrorResponse(result);
+        return HttpAuthorization::errorResponse(result);
     }
     return QHttpServerResponse(QJsonObject{
         {QStringLiteral("status"), QStringLiteral("logged_out")},
@@ -561,9 +535,11 @@ QHttpServerResponse ApiServer::meResponse(
             StatusCode::ServiceUnavailable
         );
     }
-    const auto result = authService_->currentUser(bearerToken(request));
+    const auto result = authService_->currentUser(
+        HttpAuthorization::bearerToken(request)
+    );
     if (!result.succeeded()) {
-        return authErrorResponse(result);
+        return HttpAuthorization::errorResponse(result);
     }
     return QHttpServerResponse(QJsonObject{
         {QStringLiteral("user"), userJson(result.session.user)},
@@ -599,12 +575,12 @@ QHttpServerResponse ApiServer::changePasswordResponse(
     }
 
     const auto result = authService_->changePassword(
-        bearerToken(request),
+        HttpAuthorization::bearerToken(request),
         object.value(QStringLiteral("currentPassword")).toString(),
         object.value(QStringLiteral("newPassword")).toString()
     );
     if (!result.succeeded()) {
-        return authErrorResponse(result);
+        return HttpAuthorization::errorResponse(result);
     }
     return QHttpServerResponse(QJsonObject{
         {QStringLiteral("status"), QStringLiteral("password_changed")},

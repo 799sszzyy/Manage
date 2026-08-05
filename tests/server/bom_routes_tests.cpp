@@ -1,6 +1,9 @@
+#include "manage/auth/auth_service.h"
 #include "manage/data/bom_repository.h"
 #include "manage/data/bom_service.h"
 #include "manage/server/api_server.h"
+
+#include "support/fake_user_repository.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -15,6 +18,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -195,10 +199,15 @@ QUrl endpoint(quint16 port, const QString& path) {
     return QUrl(QStringLiteral("http://127.0.0.1:%1%2").arg(port).arg(path));
 }
 
-QNetworkRequest jsonRequest(quint16 port, const QString& path) {
+QNetworkRequest jsonRequest(
+    quint16 port,
+    const QString& path,
+    const QByteArray& bearerToken
+) {
     QNetworkRequest request(endpoint(port, path));
     request.setHeader(QNetworkRequest::ContentTypeHeader,
                       QStringLiteral("application/json"));
+    request.setRawHeader("Authorization", "Bearer " + bearerToken);
     return request;
 }
 
@@ -206,7 +215,11 @@ QByteArray compact(const QJsonObject& object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
 
-void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
+void completeBomRouteFlow(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& bearerToken
+) {
     const QJsonArray initialItems{
         QJsonObject{{QStringLiteral("lineNo"), 10},
                     {QStringLiteral("materialId"), 42},
@@ -218,7 +231,8 @@ void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
         {QStringLiteral("items"), initialItems},
     };
     auto response = waitForReply(network.post(
-        jsonRequest(port, QStringLiteral("/api/v1/boms")), compact(createBody)
+        jsonRequest(port, QStringLiteral("/api/v1/boms"), bearerToken),
+        compact(createBody)
     ));
     require(response.status == 201, "create BOM must return HTTP 201");
     auto object = QJsonDocument::fromJson(response.body).object();
@@ -237,7 +251,8 @@ void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
         {QStringLiteral("revision"), 1},
     };
     response = waitForReply(network.put(
-        jsonRequest(port, QStringLiteral("/api/v1/boms/1")), compact(updateBody)
+        jsonRequest(port, QStringLiteral("/api/v1/boms/1"), bearerToken),
+        compact(updateBody)
     ));
     require(response.status == 200, "update BOM must return HTTP 200");
     object = QJsonDocument::fromJson(response.body).object();
@@ -256,7 +271,11 @@ void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
         }},
     };
     response = waitForReply(network.put(
-        jsonRequest(port, QStringLiteral("/api/v1/boms/1/items")),
+        jsonRequest(
+            port,
+            QStringLiteral("/api/v1/boms/1/items"),
+            bearerToken
+        ),
         compact(replaceBody)
     ));
     require(response.status == 200, "replace items must return HTTP 200");
@@ -272,7 +291,11 @@ void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
         {QStringLiteral("isEnabled"), false},
     };
     response = waitForReply(network.sendCustomRequest(
-        jsonRequest(port, QStringLiteral("/api/v1/boms/1/enabled")),
+        jsonRequest(
+            port,
+            QStringLiteral("/api/v1/boms/1/enabled"),
+            bearerToken
+        ),
         QByteArrayLiteral("PATCH"), compact(disableBody)
     ));
     require(response.status == 200, "disable must return HTTP 200");
@@ -282,16 +305,20 @@ void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
     require(object.value(QStringLiteral("revision")).toInteger() == 4,
             "disable increases revision");
 
-    response = waitForReply(network.get(QNetworkRequest(
-        endpoint(port, QStringLiteral("/api/v1/boms/1"))
+    response = waitForReply(network.get(jsonRequest(
+        port,
+        QStringLiteral("/api/v1/boms/1"),
+        bearerToken
     )));
     require(response.status == 200, "detail must return HTTP 200");
     object = QJsonDocument::fromJson(response.body).object();
     require(object.value(QStringLiteral("items")).toArray().size() == 1,
             "detail returns BOM items");
 
-    response = waitForReply(network.get(QNetworkRequest(
-        endpoint(port, QStringLiteral("/api/v1/boms?page=1&pageSize=10"))
+    response = waitForReply(network.get(jsonRequest(
+        port,
+        QStringLiteral("/api/v1/boms?page=1&pageSize=10"),
+        bearerToken
     )));
     require(response.status == 200, "list must return HTTP 200");
     object = QJsonDocument::fromJson(response.body).object();
@@ -301,7 +328,8 @@ void completeBomRouteFlow(QNetworkAccessManager& network, quint16 port) {
 
 void malformedAndDuplicateItemsAreRejected(
     QNetworkAccessManager& network,
-    quint16 port
+    quint16 port,
+    const QByteArray& bearerToken
 ) {
     const QJsonObject body{
         {QStringLiteral("code"), QStringLiteral("BOM-BAD")},
@@ -316,7 +344,8 @@ void malformedAndDuplicateItemsAreRejected(
         }},
     };
     const auto response = waitForReply(network.post(
-        jsonRequest(port, QStringLiteral("/api/v1/boms")), compact(body)
+        jsonRequest(port, QStringLiteral("/api/v1/boms"), bearerToken),
+        compact(body)
     ));
     require(response.status == 400, "duplicate material must return HTTP 400");
     const auto object = QJsonDocument::fromJson(response.body).object();
@@ -331,7 +360,36 @@ int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
     MemoryBomRepository repository;
     manage::data::BomService service(repository);
-    manage::server::ApiServer server(&service);
+    auto userRepository =
+        std::make_shared<manage::tests::FakeUserRepository>();
+    auto authService = std::make_shared<manage::auth::AuthService>(
+        userRepository,
+        manage::auth::PasswordHasher(
+            manage::auth::PasswordHasher::kMinimumIterations
+        )
+    );
+    require(
+        authService->bootstrapAdministrator(
+            QStringLiteral("Correct Horse Battery 1"),
+            QStringLiteral("BOM administrator")
+        ).succeeded(),
+        "BOM administrator bootstrap"
+    );
+    const auto login = authService->login(
+        QStringLiteral("admin"),
+        QStringLiteral("Correct Horse Battery 1")
+    );
+    require(login.succeeded(), "BOM administrator login");
+    require(
+        authService->changePassword(
+            login.session.accessToken,
+            QStringLiteral("Correct Horse Battery 1"),
+            QStringLiteral("Replaced Horse Battery 2")
+        ).succeeded(),
+        "BOM administrator password change"
+    );
+
+    manage::server::ApiServer server(authService, nullptr, &service);
     const auto port = server.listen(QHostAddress::LocalHost, 0);
     if (port == 0) {
         std::cerr << "[FAIL] unable to start BOM route test server\n";
@@ -340,9 +398,16 @@ int main(int argc, char* argv[]) {
 
     QNetworkAccessManager network;
     try {
-        completeBomRouteFlow(network, port);
+        const auto withoutToken = waitForReply(network.get(QNetworkRequest(
+            endpoint(port, QStringLiteral("/api/v1/boms"))
+        )));
+        require(withoutToken.status == 401,
+                "BOM request without token must return HTTP 401");
+
+        const auto token = login.session.accessToken.toLatin1();
+        completeBomRouteFlow(network, port, token);
         std::cout << "[PASS] complete BOM route flow\n";
-        malformedAndDuplicateItemsAreRejected(network, port);
+        malformedAndDuplicateItemsAreRejected(network, port, token);
         std::cout << "[PASS] BOM route validation\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
