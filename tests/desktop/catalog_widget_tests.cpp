@@ -317,6 +317,8 @@ void adminCanSearchPageAndMutate(CatalogApi& api) {
     auto* materialEdit = child<QPushButton>(widget, "materialEditButton");
     auto* materialToggle = child<QPushButton>(widget, "materialToggleButton");
     auto* customerAdd = child<QPushButton>(widget, "customerAddButton");
+    auto* materialsNext = child<QPushButton>(widget, "materialsNextButton");
+    auto* customersNext = child<QPushButton>(widget, "customersNextButton");
     require(materialAdd->isEnabled(), "admin material add must be enabled");
     require(customerAdd->isEnabled(), "admin customer add must be enabled");
 
@@ -324,7 +326,9 @@ void adminCanSearchPageAndMutate(CatalogApi& api) {
     auto* materialSearch = child<QLineEdit>(widget, "materialsSearchEdit");
     materialSearch->setText(QStringLiteral("不锈钢 板"));
     child<QPushButton>(widget, "materialsSearchButton")->click();
-    require(waitUntil([&]() { return api.materialGets > searchGets; }), "material search request missing");
+    require(waitUntil([&]() {
+        return api.materialGets > searchGets && materialsNext->isEnabled();
+    }), "material search response must enable the next page");
     require(
         api.lastMaterialQuery.queryItemValue(QStringLiteral("search")) ==
             QStringLiteral("不锈钢 板"),
@@ -336,31 +340,33 @@ void adminCanSearchPageAndMutate(CatalogApi& api) {
     );
 
     const auto pageGets = api.materialGets;
-    child<QPushButton>(widget, "materialsNextButton")->click();
-    require(waitUntil([&]() { return api.materialGets > pageGets; }), "next-page request missing");
+    materialsNext->click();
+    require(waitUntil([&]() {
+        return api.materialGets > pageGets &&
+            child<QLabel>(widget, "materialsPageLabel")
+                ->text().contains(QStringLiteral("第 2 / 2 页"));
+    }), "next-page response missing");
     require(
         api.lastMaterialQuery.queryItemValue(QStringLiteral("page")) == QStringLiteral("2"),
         "next page must request page two"
     );
-    require(
-        child<QLabel>(widget, "materialsPageLabel")->text().contains(QStringLiteral("第 2 / 2 页")),
-        "page label must show current and total pages"
-    );
-
     const auto customerSearchGets = api.customerGets;
     child<QLineEdit>(widget, "customersSearchEdit")->setText(QStringLiteral("示例 公司"));
     child<QPushButton>(widget, "customersSearchButton")->click();
-    require(waitUntil([&]() { return api.customerGets > customerSearchGets; }),
-            "customer search request missing");
+    require(waitUntil([&]() {
+        return api.customerGets > customerSearchGets && customersNext->isEnabled();
+    }), "customer search response must enable the next page");
     require(
         api.lastCustomerQuery.queryItemValue(QStringLiteral("search")) ==
             QStringLiteral("示例 公司"),
         "customer search query must preserve UTF-8 text"
     );
     const auto customerPageGets = api.customerGets;
-    child<QPushButton>(widget, "customersNextButton")->click();
-    require(waitUntil([&]() { return api.customerGets > customerPageGets; }),
-            "customer next-page request missing");
+    customersNext->click();
+    require(waitUntil([&]() {
+        return api.customerGets > customerPageGets &&
+            child<QPushButton>(widget, "customersRefreshButton")->isEnabled();
+    }), "customer next-page response missing");
     require(
         api.lastCustomerQuery.queryItemValue(QStringLiteral("page")) == QStringLiteral("2"),
         "customer next page must request page two"
@@ -531,10 +537,15 @@ void errorsAreShownInChinese(CatalogApi& api) {
 
     auto* table = child<QTableWidget>(widget, "materialsTable");
     table->selectRow(0);
-    child<QPushButton>(widget, "materialEditButton")->click();
+    auto* editButton = child<QPushButton>(widget, "materialEditButton");
+    require(waitUntil([&]() { return editButton->isEnabled(); }),
+            "material selection must enable conflict edit");
+    editButton->click();
     api.conflictNextMaterialPut = true;
+    const auto putsBeforeConflict = api.materialPuts;
     child<QPushButton>(widget, "materialSaveButton")->click();
-    require(waitUntil([&]() { return api.materialPuts >= 2; }), "conflict PUT missing");
+    require(waitUntil([&]() { return api.materialPuts > putsBeforeConflict; }),
+            "conflict PUT missing");
     require(
         waitUntil([&]() {
             return child<QLabel>(widget, "materialsStatusLabel")

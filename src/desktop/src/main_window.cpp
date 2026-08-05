@@ -96,7 +96,7 @@ bool passwordLooksValid(const QString& password) {
 MainWindow::MainWindow(QUrl apiBaseUrl, QWidget* parent)
     : QMainWindow(parent),
       apiClient_(new ApiClient(std::move(apiBaseUrl), this)) {
-    setWindowTitle(QStringLiteral("本地报价管理系统 v0.3.0"));
+    setWindowTitle(QStringLiteral("本地报价管理系统 v0.4.0（Batch 4）"));
     resize(980, 660);
 
     rootStack_ = new QStackedWidget(this);
