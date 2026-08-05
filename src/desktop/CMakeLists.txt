@@ -1,4 +1,6 @@
 add_library(manage_desktop_lib STATIC
+    include/manage/desktop/api_client.h
+    src/api_client.cpp
     src/main_window.cpp
 )
 

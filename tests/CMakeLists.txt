@@ -156,3 +156,28 @@ if(TARGET Manage::Server)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
     )
 endif()
+
+if(TARGET Manage::Desktop)
+    add_executable(manage_desktop_api_client_tests
+        desktop/api_client_tests.cpp
+    )
+    target_link_libraries(
+        manage_desktop_api_client_tests
+        PRIVATE
+            Manage::Desktop
+            Qt6::Core
+            Qt6::HttpServer
+            Qt6::Network
+    )
+    manage_apply_project_options(manage_desktop_api_client_tests)
+    add_test(
+        NAME manage.desktop.api_client
+        COMMAND manage_desktop_api_client_tests
+    )
+    set_tests_properties(
+        manage.desktop.api_client
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
+    )
+endif()
