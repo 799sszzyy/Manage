@@ -11,7 +11,7 @@
 int main(int argc, char* argv[]) {
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("manage-desktop"));
-    QApplication::setApplicationVersion(QStringLiteral("0.3.0"));
+    QApplication::setApplicationVersion(QStringLiteral("0.4.0"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(

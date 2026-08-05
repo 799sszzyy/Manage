@@ -96,10 +96,16 @@ struct TestApi final {
     QString loginRole{QStringLiteral("admin")};
     QByteArray lastAuthorization;
     QJsonObject lastBody;
+    QJsonObject lastCreateBody;
+    QJsonObject lastUpdateBody;
+    QJsonObject lastReplaceBody;
+    QJsonObject lastToggleBody;
+    QJsonObject lastQuoteBody;
     QString lastPath;
     QString lastSearch;
     QString lastMaterialSearch;
     int createCount{};
+    int detailCount{};
     int updateCount{};
     int replaceCount{};
     int toggleCount{};
@@ -182,6 +188,7 @@ struct TestApi final {
             QHttpServerRequest::Method::Get,
             [this](qint64, const QHttpServerRequest& request) {
                 capture(request);
+                ++detailCount;
                 return QHttpServerResponse(detail());
             }
         );
@@ -190,6 +197,7 @@ struct TestApi final {
             QHttpServerRequest::Method::Post,
             [this](const QHttpServerRequest& request) {
                 capture(request);
+                lastCreateBody = lastBody;
                 ++createCount;
                 bomId = 2;
                 revision = 1;
@@ -204,6 +212,7 @@ struct TestApi final {
             QHttpServerRequest::Method::Put,
             [this](qint64, const QHttpServerRequest& request) {
                 capture(request);
+                lastUpdateBody = lastBody;
                 ++updateCount;
                 if (failNextUpdate) {
                     failNextUpdate = false;
@@ -225,6 +234,7 @@ struct TestApi final {
             QHttpServerRequest::Method::Put,
             [this](qint64, const QHttpServerRequest& request) {
                 capture(request);
+                lastReplaceBody = lastBody;
                 ++replaceCount;
                 items = lastBody.value(QStringLiteral("items")).toArray();
                 ++revision;
@@ -236,6 +246,7 @@ struct TestApi final {
             QHttpServerRequest::Method::Patch,
             [this](qint64, const QHttpServerRequest& request) {
                 capture(request);
+                lastToggleBody = lastBody;
                 ++toggleCount;
                 enabled = lastBody.value(QStringLiteral("isEnabled")).toBool();
                 ++revision;
@@ -247,6 +258,7 @@ struct TestApi final {
             QHttpServerRequest::Method::Post,
             [this](const QHttpServerRequest& request) {
                 capture(request);
+                lastQuoteBody = lastBody;
                 ++quoteCount;
                 return QHttpServerResponse(QJsonObject{
                     {QStringLiteral("materialCostCents"), 3085},
@@ -358,14 +370,32 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
     auto* search = requiredChild<QLineEdit>(widget, "bomSearchEdit");
     search->setText(QStringLiteral("总成 A"));
     refresh->click();
-    require(waitUntil([&]() { return api.lastSearch == QStringLiteral("总成 A"); }),
+    require(waitUntil([&]() {
+        return api.lastSearch == QStringLiteral("总成 A") &&
+               list->rowCount() == 1 && refresh->isEnabled();
+    }),
             "BOM search query must be UTF-8 encoded and sent");
 
     list->selectRow(0);
-    requiredChild<QPushButton>(widget, "bomViewButton")->click();
+    auto* viewButton = requiredChild<QPushButton>(widget, "bomViewButton");
+    require(waitUntil([&]() { return viewButton->isEnabled(); }),
+            "selected BOM must enable the detail action");
+    const auto detailCountBefore = api.detailCount;
+    viewButton->click();
+    require(waitUntil([&]() { return api.detailCount > detailCountBefore; }),
+            "selected BOM detail request must reach the API");
     auto* codeEdit = requiredChild<QLineEdit>(widget, "bomCodeEdit");
-    require(waitUntil([&]() { return codeEdit->text() == api.code; }),
-            "selected BOM detail must load asynchronously");
+    if (!waitUntil([&]() { return codeEdit->text() == api.code; })) {
+        throw TestFailure(
+            QStringLiteral(
+                "selected BOM detail must load asynchronously; actual=%1 expected=%2 status=%3"
+            )
+                .arg(codeEdit->text())
+                .arg(api.code)
+                .arg(requiredChild<QLabel>(widget, "bomStatusLabel")->text())
+                .toStdString()
+        );
+    }
 
     requiredChild<QPushButton>(widget, "bomNewButton")->click();
     codeEdit->setText(QStringLiteral("BOM-NEW"));
@@ -380,23 +410,36 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
     requiredChild<QPushButton>(widget, "bomSaveButton")->click();
     require(waitUntil([&]() { return api.createCount == 1; }),
             "new BOM must use POST");
-    const auto createdItem = api.lastBody.value(QStringLiteral("items"))
+    const auto createdItem = api.lastCreateBody.value(QStringLiteral("items"))
                                  .toArray().first().toObject();
     require(createdItem.value(QStringLiteral("materialId")).toInteger() == 42,
             "BOM item must use selected backend material id");
     require(createdItem.value(QStringLiteral("quantityMicros")).toInteger() == 1'500'001,
             "BOM quantity must convert exactly to micros");
     require(waitUntil([&]() {
-        return requiredChild<QLabel>(widget, "bomRevisionLabel")
-                   ->text().startsWith(QStringLiteral("1"));
-    }), "created BOM revision must be stored");
+        const auto text = requiredChild<QLabel>(widget, "bomRevisionLabel")->text();
+        return text.startsWith(QStringLiteral("1")) &&
+               text.contains(QStringLiteral("ID 2")) &&
+               requiredChild<QPushButton>(widget, "bomSaveButton")->isEnabled();
+    }), "created BOM id and revision must be stored before editing");
 
     requiredChild<QLineEdit>(widget, "bomNameEdit")
         ->setText(QStringLiteral("新总成（修改）"));
-    requiredChild<QPushButton>(widget, "bomSaveButton")->click();
-    require(waitUntil([&]() { return api.updateCount == 1; }),
-            "existing BOM must use PUT");
-    require(api.lastBody.value(QStringLiteral("revision")).toInt() == 1,
+    auto* saveButton = requiredChild<QPushButton>(widget, "bomSaveButton");
+    saveButton->click();
+    if (!waitUntil([&]() { return api.updateCount == 1; })) {
+        throw TestFailure(
+            QStringLiteral(
+                "existing BOM must use PUT; enabled=%1 revision=%2 status=%3 lastPath=%4"
+            )
+                .arg(saveButton->isEnabled())
+                .arg(requiredChild<QLabel>(widget, "bomRevisionLabel")->text())
+                .arg(requiredChild<QLabel>(widget, "bomStatusLabel")->text())
+                .arg(api.lastPath)
+                .toStdString()
+        );
+    }
+    require(api.lastUpdateBody.value(QStringLiteral("revision")).toInt() == 1,
             "metadata update must send current revision");
     auto* replaceButton = requiredChild<QPushButton>(
         widget, "bomReplaceItemsButton"
@@ -411,9 +454,9 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
     replaceButton->click();
     require(waitUntil([&]() { return api.replaceCount == 1; }),
             "replace items action must call item endpoint");
-    require(api.lastBody.value(QStringLiteral("revision")).toInt() == 2,
+    require(api.lastReplaceBody.value(QStringLiteral("revision")).toInt() == 2,
             "item replacement must send updated revision");
-    require(api.lastBody.value(QStringLiteral("items")).toArray().first().toObject()
+    require(api.lastReplaceBody.value(QStringLiteral("items")).toArray().first().toObject()
                 .value(QStringLiteral("quantityMicros")).toInteger() == 2'250'000,
             "replacement quantity must convert exactly to micros");
 
@@ -428,9 +471,9 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
     toggleButton->click();
     require(waitUntil([&]() { return api.toggleCount == 1; }),
             "toggle action must call enabled endpoint");
-    require(api.lastBody.value(QStringLiteral("revision")).toInt() == 3,
+    require(api.lastToggleBody.value(QStringLiteral("revision")).toInt() == 3,
             "toggle must send latest revision");
-    require(!api.lastBody.value(QStringLiteral("isEnabled")).toBool(true),
+    require(!api.lastToggleBody.value(QStringLiteral("isEnabled")).toBool(true),
             "enabled BOM must be disabled");
     require(waitUntil([&]() {
         return requiredChild<QPushButton>(widget, "bomSaveButton")->isEnabled() &&
@@ -456,17 +499,17 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
     requiredChild<QPushButton>(widget, "quoteCalculateButton")->click();
     require(waitUntil([&]() { return api.quoteCount == 1; }),
             "quote calculation must call calculate endpoint");
-    const auto quoteLine = api.lastBody.value(QStringLiteral("lines"))
+    const auto quoteLine = api.lastQuoteBody.value(QStringLiteral("lines"))
                                .toArray().first().toObject();
     require(quoteLine.value(QStringLiteral("quantityMicros")).toInteger() == 2'500'000,
             "quote quantity must convert exactly to micros");
     require(quoteLine.value(QStringLiteral("unitPriceCents")).toInteger() == 1234,
             "quote unit price must convert exactly to cents");
-    require(api.lastBody.value(QStringLiteral("freightCents")).toInteger() == 1025,
+    require(api.lastQuoteBody.value(QStringLiteral("freightCents")).toInteger() == 1025,
             "freight must convert exactly to cents");
-    require(api.lastBody.value(QStringLiteral("markupBasisPoints")).toInteger() == 2050,
+    require(api.lastQuoteBody.value(QStringLiteral("markupBasisPoints")).toInteger() == 2050,
             "markup percentage must convert exactly to basis points");
-    require(api.lastBody.value(QStringLiteral("taxBasisPoints")).toInteger() == 1300,
+    require(api.lastQuoteBody.value(QStringLiteral("taxBasisPoints")).toInteger() == 1300,
             "tax percentage must convert exactly to basis points");
     require(waitUntil([&]() {
         return requiredChild<QLabel>(widget, "quotePriceWithTaxLabel")->text()

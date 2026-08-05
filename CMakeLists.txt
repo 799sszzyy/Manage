@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     Manage
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "Local single-computer quotation management system"
     LANGUAGES CXX
 )
