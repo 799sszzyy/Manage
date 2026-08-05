@@ -55,6 +55,38 @@ if(TARGET Manage::Data)
         NAME manage.data.catalog_repository_mysql
         COMMAND manage_catalog_mysql_tests
     )
+
+    add_executable(manage_bom_service_tests
+        data/bom_service_tests.cpp
+    )
+    target_link_libraries(manage_bom_service_tests
+        PRIVATE
+            Manage::Data
+            Qt6::Core
+    )
+    manage_apply_project_options(manage_bom_service_tests)
+    add_test(NAME manage.data.bom_service COMMAND manage_bom_service_tests)
+
+    add_executable(manage_bom_mysql_tests
+        data/bom_mysql_integration_tests.cpp
+    )
+    target_link_libraries(manage_bom_mysql_tests
+        PRIVATE
+            Manage::Data
+            Qt6::Core
+            Qt6::Sql
+    )
+    manage_apply_project_options(manage_bom_mysql_tests)
+    add_test(NAME manage.data.bom_mysql_integration
+             COMMAND manage_bom_mysql_tests)
+    add_test(NAME manage.data.bom_mysql_safety
+             COMMAND manage_bom_mysql_tests)
+    set_tests_properties(
+        manage.data.bom_mysql_safety
+        PROPERTIES
+            WILL_FAIL TRUE
+            ENVIRONMENT "MANAGE_TEST_MYSQL=1;MANAGE_DB_NAME=manage"
+    )
 endif()
 
 if(TARGET Manage::Server)
@@ -86,16 +118,32 @@ if(TARGET Manage::Server)
     )
     manage_apply_project_options(manage_catalog_routes_tests)
     add_test(NAME manage.server.catalog_routes COMMAND manage_catalog_routes_tests)
+
+    add_executable(manage_bom_routes_tests
+        server/bom_routes_tests.cpp
+    )
+    target_link_libraries(manage_bom_routes_tests
+        PRIVATE
+            Manage::Server
+            Qt6::Core
+            Qt6::Network
+    )
+    manage_apply_project_options(manage_bom_routes_tests)
+    add_test(NAME manage.server.bom_routes COMMAND manage_bom_routes_tests)
     add_test(NAME manage.server.smoke COMMAND manage_server --smoke-test)
     add_test(NAME manage.desktop.smoke COMMAND manage_desktop --smoke-test)
 
     set_tests_properties(
         manage.data.migrations
         manage.auth.service
-        manage.server.api
-        manage.server.catalog_routes
         manage.data.catalog_service
         manage.data.catalog_repository_mysql
+        manage.data.bom_service
+        manage.data.bom_mysql_integration
+        manage.data.bom_mysql_safety
+        manage.server.api
+        manage.server.catalog_routes
+        manage.server.bom_routes
         manage.server.smoke
         PROPERTIES
             ENVIRONMENT_MODIFICATION

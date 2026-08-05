@@ -14,6 +14,7 @@ class AuthService;
 }
 
 namespace manage::data {
+class BomService;
 class CatalogRepository;
 class CatalogService;
 }
@@ -30,6 +31,12 @@ public:
     ApiServer(
         std::shared_ptr<manage::auth::AuthService> authService,
         std::shared_ptr<manage::data::CatalogRepository> catalogRepository
+    );
+    explicit ApiServer(manage::data::BomService* bomService);
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService
     );
 
     quint16 listen(
