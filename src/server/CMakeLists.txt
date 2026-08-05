@@ -34,6 +34,9 @@ qt_add_executable(manage_server
 )
 
 target_link_libraries(manage_server PRIVATE Manage::Server)
+target_compile_definitions(manage_server PRIVATE
+    MANAGE_VERSION="${PROJECT_VERSION}"
+)
 manage_apply_project_options(manage_server)
 
 set_target_properties(manage_server PROPERTIES

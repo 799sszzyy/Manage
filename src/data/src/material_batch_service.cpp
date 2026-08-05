@@ -121,6 +121,8 @@ MaterialBatchResult MaterialBatchService::importMaterials(
         return result;
     }
 
+    // Validate and normalize every row before the first SQL statement. This is
+    // what guarantees that an invalid workbook cannot be partially imported.
     QSet<QString> workbookCodes;
     for (auto& row : rows) {
         normalize(row.material);
@@ -157,6 +159,8 @@ MaterialBatchResult MaterialBatchService::importMaterials(
         return result;
     }
 
+    // All upserts share one transaction: either every validated row becomes
+    // visible, or the first database error rolls the complete batch back.
     if (!database_.transaction()) {
         addError(result, 0, QStringLiteral("database"),
                  QStringLiteral("无法开始导入事务：%1").arg(database_.lastError().text()));

@@ -551,7 +551,12 @@ void rolesEnforceReadOnlyAndCalculationRules(TestApi& api) {
         require(waitUntil([&]() { return list->rowCount() == 1; }),
                 "viewer BOM list must load");
         list->selectRow(0);
-        require(requiredChild<QPushButton>(widget, "bomViewButton")->isEnabled(),
+        // The material list and BOM list load independently. Wait until both
+        // requests settle before asserting the final viewer control state.
+        require(waitUntil([&]() {
+                    return requiredChild<QPushButton>(widget, "bomViewButton")
+                        ->isEnabled();
+                }),
                 "viewer must be able to view BOM details");
         require(!requiredChild<QPushButton>(widget, "bomNewButton")->isEnabled(),
                 "viewer must not create BOMs");
