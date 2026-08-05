@@ -1,7 +1,9 @@
 add_library(manage_data STATIC
+    src/bom_service.cpp
     src/database_config.cpp
     src/database_connection.cpp
     src/migration_runner.cpp
+    src/mysql_bom_repository.cpp
 )
 
 add_library(Manage::Data ALIAS manage_data)
