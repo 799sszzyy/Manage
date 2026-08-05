@@ -35,6 +35,7 @@ if(MANAGE_ENABLE_QT)
     )
 
     qt_standard_project_setup()
+    add_subdirectory(src/auth)
     add_subdirectory(src/data)
     add_subdirectory(src/server)
     add_subdirectory(src/desktop)

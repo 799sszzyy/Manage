@@ -1,4 +1,6 @@
+#include "manage/auth/auth_service.h"
 #include "manage/server/api_server.h"
+#include "support/fake_user_repository.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -68,6 +70,27 @@ NetworkResponse waitForReply(QNetworkReply* reply) {
 
 QUrl endpoint(quint16 port, const QString& path) {
     return QUrl(QStringLiteral("http://127.0.0.1:%1%2").arg(port).arg(path));
+}
+
+NetworkResponse postJson(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QString& path,
+    const QJsonObject& object,
+    const QByteArray& bearerToken = {}
+) {
+    QNetworkRequest request(endpoint(port, path));
+    request.setHeader(
+        QNetworkRequest::ContentTypeHeader,
+        QStringLiteral("application/json")
+    );
+    if (!bearerToken.isEmpty()) {
+        request.setRawHeader("Authorization", "Bearer " + bearerToken);
+    }
+    return waitForReply(network.post(
+        request,
+        QJsonDocument(object).toJson(QJsonDocument::Compact)
+    ));
 }
 
 void healthEndpointReportsServiceAndDatabaseDriver(
@@ -187,12 +210,163 @@ void calculateEndpointReturnsStructuredValidationErrors(
     );
 }
 
+void authenticationEndpointsCoverTheSessionLifecycle(
+    QNetworkAccessManager& network,
+    quint16 port
+) {
+    const auto bootstrap = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/auth/bootstrap"),
+        QJsonObject{
+            {
+                QStringLiteral("password"),
+                QStringLiteral("Correct Horse Battery 1")
+            },
+            {QStringLiteral("displayName"), QStringLiteral("系统管理员")},
+        }
+    );
+    require(bootstrap.status == 201, "bootstrap endpoint must return HTTP 201");
+    require(
+        QJsonDocument::fromJson(bootstrap.body)
+                .object()
+                .value(QStringLiteral("user"))
+                .toObject()
+                .value(QStringLiteral("role"))
+                .toString() == QStringLiteral("admin"),
+        "bootstrap returns the admin role"
+    );
+
+    const auto login = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/auth/login"),
+        QJsonObject{
+            {QStringLiteral("username"), QStringLiteral("admin")},
+            {
+                QStringLiteral("password"),
+                QStringLiteral("Correct Horse Battery 1")
+            },
+        }
+    );
+    require(login.status == 200, "login endpoint must return HTTP 200");
+    const auto token = QJsonDocument::fromJson(login.body)
+                           .object()
+                           .value(QStringLiteral("accessToken"))
+                           .toString()
+                           .toLatin1();
+    require(!token.isEmpty(), "login returns an access token");
+
+    QNetworkRequest meRequest(endpoint(
+        port,
+        QStringLiteral("/api/v1/auth/me")
+    ));
+    meRequest.setRawHeader("Authorization", "Bearer " + token);
+    const auto me = waitForReply(network.get(meRequest));
+    require(me.status == 200, "me endpoint accepts an active token");
+    require(
+        QJsonDocument::fromJson(me.body)
+            .object()
+            .value(QStringLiteral("user"))
+            .toObject()
+            .value(QStringLiteral("mustChangePassword"))
+            .toBool(),
+        "first login reports required password change"
+    );
+
+    const auto rejectedChange = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/auth/change-password"),
+        QJsonObject{
+            {
+                QStringLiteral("currentPassword"),
+                QStringLiteral("Incorrect Current Password")
+            },
+            {
+                QStringLiteral("newPassword"),
+                QStringLiteral("Replaced Horse Battery 2")
+            },
+        },
+        token
+    );
+    require(
+        rejectedChange.status == 401,
+        "incorrect current password returns HTTP 401"
+    );
+    require(
+        QJsonDocument::fromJson(rejectedChange.body)
+                .object()
+                .value(QStringLiteral("error"))
+                .toString() == QStringLiteral("invalid_credentials"),
+        "password change error contains a stable code"
+    );
+
+    const auto changed = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/auth/change-password"),
+        QJsonObject{
+            {
+                QStringLiteral("currentPassword"),
+                QStringLiteral("Correct Horse Battery 1")
+            },
+            {
+                QStringLiteral("newPassword"),
+                QStringLiteral("Replaced Horse Battery 2")
+            },
+        },
+        token
+    );
+    require(changed.status == 200, "change-password endpoint returns HTTP 200");
+    require(
+        !QJsonDocument::fromJson(changed.body)
+             .object()
+             .value(QStringLiteral("user"))
+             .toObject()
+             .value(QStringLiteral("mustChangePassword"))
+             .toBool(true),
+        "password change clears required flag"
+    );
+
+    const auto logout = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/auth/logout"),
+        QJsonObject{},
+        token
+    );
+    require(logout.status == 200, "logout endpoint must return HTTP 200");
+
+    QNetworkRequest reusedRequest(endpoint(
+        port,
+        QStringLiteral("/api/v1/auth/me")
+    ));
+    reusedRequest.setRawHeader("Authorization", "Bearer " + token);
+    const auto reused = waitForReply(network.get(reusedRequest));
+    require(reused.status == 401, "logged-out token must return HTTP 401");
+    require(
+        QJsonDocument::fromJson(reused.body)
+                .object()
+                .value(QStringLiteral("error"))
+                .toString() == QStringLiteral("unauthorized"),
+        "authentication error contains a stable code"
+    );
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
 
-    manage::server::ApiServer server;
+    auto repository = std::make_shared<manage::tests::FakeUserRepository>();
+    auto authService = std::make_shared<manage::auth::AuthService>(
+        repository,
+        manage::auth::PasswordHasher(
+            manage::auth::PasswordHasher::kMinimumIterations
+        )
+    );
+    manage::server::ApiServer server(std::move(authService));
     const auto port = server.listen(QHostAddress::LocalHost, 0);
     if (port == 0) {
         std::cerr << "[FAIL] unable to start test server\n";
@@ -213,6 +387,12 @@ int main(int argc, char* argv[]) {
             "validation errors",
             [&]() {
                 calculateEndpointReturnsStructuredValidationErrors(network, port);
+            }
+        },
+        {
+            "authentication lifecycle",
+            [&]() {
+                authenticationEndpointsCoverTheSessionLifecycle(network, port);
             }
         },
     };

@@ -1,6 +1,7 @@
 #include "manage/data/database_config.h"
 #include "manage/data/database_connection.h"
 #include "manage/data/migration_runner.h"
+#include "manage/data/mysql_user_repository.h"
 
 #include <QCoreApplication>
 #include <QSqlQuery>
@@ -145,6 +146,16 @@ void optionalMySqlIntegrationTest() {
     require(query.next(), "bootstrap admin expected");
     require(!query.value(0).toBool(), "bootstrap admin starts disabled");
     require(query.value(1).toBool(), "bootstrap admin must change password");
+
+    manage::data::MySqlUserRepository users(connection.database());
+    manage::auth::UserAccount admin;
+    require(
+        users.findByUsername(QStringLiteral("admin"), &admin, &error) ==
+            manage::auth::RepositoryResult::Success,
+        error.toStdString()
+    );
+    require(admin.role == manage::auth::UserRole::Admin, "admin role repository mapping");
+    require(!admin.enabled, "repository reads initial admin as disabled");
 }
 
 } // namespace
