@@ -134,7 +134,9 @@ private:
         const QByteArray& token
     ) {
         auto url = baseUrl_;
-        url.setPath(path);
+        const QUrl relative(path);
+        url.setPath(relative.path());
+        url.setQuery(relative.query());
         QNetworkRequest request(url);
         request.setHeader(
             QNetworkRequest::ContentTypeHeader,
@@ -208,6 +210,24 @@ QJsonObject expectStatus(
             .arg(responseSummary(response))
     );
     return response.object();
+}
+
+void expectEmptyStatus(
+    const Response& response,
+    int status,
+    const QString& operation
+) {
+    require(
+        response.status == status,
+        QStringLiteral("%1 expected HTTP %2, got %3")
+            .arg(operation)
+            .arg(status)
+            .arg(responseSummary(response))
+    );
+    require(
+        response.body.trimmed().isEmpty(),
+        operation + QStringLiteral(" expected an empty response body")
+    );
 }
 
 qint64 positiveId(const QJsonObject& object, const QString& operation) {
@@ -310,6 +330,12 @@ struct CreatedRecords final {
     qint64 customerId{};
     qint64 materialId{};
     qint64 bomId{};
+    qint64 quoteId{};
+    int quoteRevision{};
+    QString quoteNumber;
+    QString customerSnapshot;
+    QString materialSnapshot;
+    qint64 quotePriceWithTaxCents{};
 };
 
 void expectAuthError(
@@ -361,6 +387,18 @@ void checkStrictAuthorizationBeforePasswordChange(
         403,
         QStringLiteral("password_change_required"),
         QStringLiteral("temporary-password catalog read")
+    );
+    expectAuthError(
+        client.get(QStringLiteral("/api/v1/quotes")),
+        401,
+        QStringLiteral("unauthorized"),
+        QStringLiteral("anonymous quote read")
+    );
+    expectAuthError(
+        client.get(QStringLiteral("/api/v1/quotes"), temporaryToken),
+        403,
+        QStringLiteral("password_change_required"),
+        QStringLiteral("temporary-password quote read")
     );
     std::cout << "[PASS] strict authorization rejects anonymous and temporary sessions\n";
 }
@@ -536,6 +574,378 @@ CreatedRecords createAndModifyBusinessData(
     return {customerId, materialId, bomId};
 }
 
+QJsonObject quotePayload(
+    const CreatedRecords& records,
+    const WorkflowConfig& config,
+    const QString& notes,
+    qint64 unitPriceCents = 23'456
+) {
+    return {
+        {QStringLiteral("customerId"), records.customerId},
+        {QStringLiteral("bomTemplateId"), records.bomId},
+        {QStringLiteral("freightCents"), 1'000},
+        {QStringLiteral("otherFeesCents"), 200},
+        {QStringLiteral("markupBasisPoints"), 2'000},
+        {QStringLiteral("taxBasisPoints"), 1'300},
+        {QStringLiteral("notes"), notes},
+        {QStringLiteral("items"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("materialId"), records.materialId},
+                {QStringLiteral("quantityMicros"), 2'000'000},
+                {QStringLiteral("unitPriceCents"), unitPriceCents},
+                {QStringLiteral("notes"), config.prefix + QStringLiteral("-LINE")},
+            },
+        }},
+    };
+}
+
+void createQuoteDraft(
+    HttpClient& client,
+    const WorkflowConfig& config,
+    const QByteArray& token,
+    CreatedRecords& records
+) {
+    auto payload = quotePayload(
+        records, config, config.prefix + QStringLiteral("-QUOTE-DRAFT")
+    );
+    payload.insert(QStringLiteral("customerName"), QStringLiteral("FORGED-CUSTOMER"));
+    payload.insert(QStringLiteral("priceWithTaxCents"), 1);
+    payload.insert(QStringLiteral("materialCostCents"), 1);
+
+    const auto quote = expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("POST"),
+            QStringLiteral("/api/v1/quotes"),
+            payload,
+            token
+        ),
+        201,
+        QStringLiteral("quote draft creation")
+    );
+    records.quoteId = positiveId(quote, QStringLiteral("quote draft creation"));
+    records.quoteRevision = positiveRevision(
+        quote, QStringLiteral("quote draft creation")
+    );
+    records.quoteNumber = quote.value(QStringLiteral("quoteNumber")).toString();
+    records.customerSnapshot = quote.value(QStringLiteral("customerName")).toString();
+    records.quotePriceWithTaxCents =
+        quote.value(QStringLiteral("priceWithTaxCents")).toInteger();
+
+    const auto items = quote.value(QStringLiteral("items")).toArray();
+    require(items.size() == 1, QStringLiteral("saved quote must contain one item"));
+    const auto item = items.first().toObject();
+    records.materialSnapshot = item.value(QStringLiteral("materialName")).toString();
+    require(quote.value(QStringLiteral("status")).toString() == QStringLiteral("draft"),
+            QStringLiteral("new quote must be a draft"));
+    require(records.quoteNumber.startsWith(QStringLiteral("Q-")),
+            QStringLiteral("server did not generate a quote number"));
+    require(records.customerSnapshot.startsWith(config.prefix) &&
+                records.customerSnapshot != QStringLiteral("FORGED-CUSTOMER"),
+            QStringLiteral("customer snapshot was not loaded from MySQL"));
+    require(records.materialSnapshot.startsWith(config.prefix),
+            QStringLiteral("material snapshot was not loaded from MySQL"));
+    require(item.value(QStringLiteral("subtotalCents")).toInteger() == 46'912,
+            QStringLiteral("quote line subtotal was not calculated by the server"));
+    require(quote.value(QStringLiteral("materialCostCents")).toInteger() == 46'912 &&
+                records.quotePriceWithTaxCents > 46'912,
+            QStringLiteral("quote totals were not calculated by the domain module"));
+
+    const auto page = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/quotes?status=draft&search=%1")
+                .arg(records.quoteNumber),
+            token
+        ),
+        200,
+        QStringLiteral("quote list search")
+    );
+    require(page.value(QStringLiteral("total")).toInteger() == 1 &&
+                page.value(QStringLiteral("items")).toArray().size() == 1,
+            QStringLiteral("saved quote was not returned by filtered list"));
+    std::cout << "[PASS] quote draft, snapshots, totals and filtered list completed\n";
+}
+
+void expectQuoteError(
+    const Response& response,
+    const QString& expectedCode,
+    const QString& operation
+) {
+    const auto object = expectStatus(response, 409, operation);
+    require(object.value(QStringLiteral("error")).toString() == expectedCode,
+            QStringLiteral("%1 returned unexpected quote error '%2'")
+                .arg(operation, object.value(QStringLiteral("error")).toString()));
+}
+
+void completeQuoteLifecycleAfterRestart(
+    HttpClient& client,
+    const WorkflowConfig& config,
+    const CreatedRecords& records,
+    const QByteArray& token
+) {
+    auto quote = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/quotes/%1").arg(records.quoteId), token
+        ),
+        200,
+        QStringLiteral("persisted quote read")
+    );
+    require(quote.value(QStringLiteral("revision")).toInt() == records.quoteRevision &&
+                quote.value(QStringLiteral("priceWithTaxCents")).toInteger() ==
+                    records.quotePriceWithTaxCents,
+            QStringLiteral("quote did not persist across server restart"));
+
+    auto updatedPayload = quotePayload(
+        records,
+        config,
+        config.prefix + QStringLiteral("-QUOTE-UPDATED"),
+        25'000
+    );
+    updatedPayload.insert(QStringLiteral("revision"), records.quoteRevision);
+    quote = expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("PUT"),
+            QStringLiteral("/api/v1/quotes/%1").arg(records.quoteId),
+            updatedPayload,
+            token
+        ),
+        200,
+        QStringLiteral("draft quote update")
+    );
+    const auto updatedRevision = positiveRevision(
+        quote, QStringLiteral("draft quote update")
+    );
+    require(updatedRevision == records.quoteRevision + 1,
+            QStringLiteral("draft update did not increment revision"));
+
+    auto stalePayload = quotePayload(
+        records, config, config.prefix + QStringLiteral("-STALE"), 26'000
+    );
+    stalePayload.insert(QStringLiteral("revision"), records.quoteRevision);
+    expectQuoteError(
+        client.sendJson(
+            QByteArrayLiteral("PUT"),
+            QStringLiteral("/api/v1/quotes/%1").arg(records.quoteId),
+            stalePayload,
+            token
+        ),
+        QStringLiteral("revision_conflict"),
+        QStringLiteral("stale draft update")
+    );
+
+    const auto issued = expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("PATCH"),
+            QStringLiteral("/api/v1/quotes/%1/status").arg(records.quoteId),
+            QJsonObject{
+                {QStringLiteral("status"), QStringLiteral("issued")},
+                {QStringLiteral("revision"), updatedRevision},
+            },
+            token
+        ),
+        200,
+        QStringLiteral("quote issue")
+    );
+    const auto issuedRevision = positiveRevision(issued, QStringLiteral("quote issue"));
+    require(issued.value(QStringLiteral("status")).toString() == QStringLiteral("issued") &&
+                issued.value(QStringLiteral("issuedAt")).isString(),
+            QStringLiteral("issued quote did not freeze with a timestamp"));
+
+    auto frozenUpdate = quotePayload(
+        records, config, config.prefix + QStringLiteral("-FROZEN"), 27'000
+    );
+    frozenUpdate.insert(QStringLiteral("revision"), issuedRevision);
+    expectQuoteError(
+        client.sendJson(
+            QByteArrayLiteral("PUT"),
+            QStringLiteral("/api/v1/quotes/%1").arg(records.quoteId),
+            frozenUpdate,
+            token
+        ),
+        QStringLiteral("revision_conflict"),
+        QStringLiteral("issued quote update")
+    );
+
+    const auto frozenCustomer = issued.value(QStringLiteral("customerName")).toString();
+    const auto frozenItems = issued.value(QStringLiteral("items")).toArray();
+    require(frozenItems.size() == 1, QStringLiteral("issued quote lost its line item"));
+    const auto frozenMaterial = frozenItems.first().toObject()
+                                    .value(QStringLiteral("materialName"))
+                                    .toString();
+    const auto frozenUnitPrice = frozenItems.first().toObject()
+                                     .value(QStringLiteral("unitPriceCents"))
+                                     .toInteger();
+    const auto frozenTotal = issued.value(QStringLiteral("priceWithTaxCents")).toInteger();
+
+    auto customer = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/customers/%1").arg(records.customerId), token
+        ),
+        200,
+        QStringLiteral("quote source customer read")
+    );
+    expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("PUT"),
+            QStringLiteral("/api/v1/customers/%1").arg(records.customerId),
+            QJsonObject{
+                {QStringLiteral("name"), config.prefix + QStringLiteral("-CUSTOMER-CHANGED")},
+                {QStringLiteral("contactName"), customer.value(QStringLiteral("contactName"))},
+                {QStringLiteral("phone"), customer.value(QStringLiteral("phone"))},
+                {QStringLiteral("address"), customer.value(QStringLiteral("address"))},
+                {QStringLiteral("revision"), customer.value(QStringLiteral("revision"))},
+            },
+            token
+        ),
+        200,
+        QStringLiteral("quote source customer update")
+    );
+
+    auto material = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/materials/%1").arg(records.materialId), token
+        ),
+        200,
+        QStringLiteral("quote source material read")
+    );
+    expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("PUT"),
+            QStringLiteral("/api/v1/materials/%1").arg(records.materialId),
+            QJsonObject{
+                {QStringLiteral("code"), material.value(QStringLiteral("code"))},
+                {QStringLiteral("name"), config.prefix + QStringLiteral("-MATERIAL-CHANGED")},
+                {QStringLiteral("specification"), material.value(QStringLiteral("specification"))},
+                {QStringLiteral("unit"), material.value(QStringLiteral("unit"))},
+                {QStringLiteral("category"), material.value(QStringLiteral("category"))},
+                {QStringLiteral("currentUnitPriceCents"), 99'999},
+                {QStringLiteral("revision"), material.value(QStringLiteral("revision"))},
+            },
+            token
+        ),
+        200,
+        QStringLiteral("quote source material update")
+    );
+
+    const auto frozen = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/quotes/%1").arg(records.quoteId), token
+        ),
+        200,
+        QStringLiteral("issued quote snapshot reread")
+    );
+    const auto rereadItem = frozen.value(QStringLiteral("items"))
+                                .toArray()
+                                .first()
+                                .toObject();
+    require(frozen.value(QStringLiteral("customerName")).toString() == frozenCustomer &&
+                rereadItem.value(QStringLiteral("materialName")).toString() ==
+                    frozenMaterial &&
+                rereadItem.value(QStringLiteral("unitPriceCents")).toInteger() ==
+                    frozenUnitPrice &&
+                frozen.value(QStringLiteral("priceWithTaxCents")).toInteger() == frozenTotal,
+            QStringLiteral("issued quote snapshots changed with source records"));
+
+    const auto cloned = expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("POST"),
+            QStringLiteral("/api/v1/quotes/%1/clone").arg(records.quoteId),
+            QJsonObject{},
+            token
+        ),
+        201,
+        QStringLiteral("issued quote clone")
+    );
+    require(cloned.value(QStringLiteral("status")).toString() == QStringLiteral("draft") &&
+                cloned.value(QStringLiteral("sourceQuoteId")).toInteger() == records.quoteId &&
+                positiveId(cloned, QStringLiteral("issued quote clone")) != records.quoteId &&
+                cloned.value(QStringLiteral("quoteNumber")).toString() != records.quoteNumber,
+            QStringLiteral("quote clone did not create an independent draft"));
+
+    expectQuoteError(
+        client.sendJson(
+            QByteArrayLiteral("DELETE"),
+            QStringLiteral("/api/v1/quotes/%1?revision=%2")
+                .arg(records.quoteId)
+                .arg(issuedRevision),
+            QJsonObject{},
+            token
+        ),
+        QStringLiteral("revision_conflict"),
+        QStringLiteral("issued quote delete")
+    );
+
+    const auto voided = expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("PATCH"),
+            QStringLiteral("/api/v1/quotes/%1/status").arg(records.quoteId),
+            QJsonObject{
+                {QStringLiteral("status"), QStringLiteral("void")},
+                {QStringLiteral("revision"), issuedRevision},
+            },
+            token
+        ),
+        200,
+        QStringLiteral("quote void")
+    );
+    require(voided.value(QStringLiteral("status")).toString() == QStringLiteral("void") &&
+                voided.value(QStringLiteral("voidedAt")).isString(),
+            QStringLiteral("void quote did not record its terminal state"));
+
+    const auto disposable = expectStatus(
+        client.sendJson(
+            QByteArrayLiteral("POST"),
+            QStringLiteral("/api/v1/quotes"),
+            quotePayload(
+                records, config, config.prefix + QStringLiteral("-DELETE-ME")
+            ),
+            token
+        ),
+        201,
+        QStringLiteral("disposable draft creation")
+    );
+    const auto disposableId = positiveId(
+        disposable, QStringLiteral("disposable draft creation")
+    );
+    const auto disposableRevision = positiveRevision(
+        disposable, QStringLiteral("disposable draft creation")
+    );
+    expectEmptyStatus(
+        client.sendJson(
+            QByteArrayLiteral("DELETE"),
+            QStringLiteral("/api/v1/quotes/%1?revision=%2")
+                .arg(disposableId)
+                .arg(disposableRevision),
+            QJsonObject{},
+            token
+        ),
+        204,
+        QStringLiteral("draft quote delete")
+    );
+    const auto missing = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/quotes/%1").arg(disposableId), token
+        ),
+        404,
+        QStringLiteral("deleted quote read")
+    );
+    require(missing.value(QStringLiteral("error")).toString() ==
+                QStringLiteral("not_found"),
+            QStringLiteral("deleted quote did not disappear"));
+
+    const auto voidPage = expectStatus(
+        client.get(
+            QStringLiteral("/api/v1/quotes?status=void&search=%1")
+                .arg(records.quoteNumber),
+            token
+        ),
+        200,
+        QStringLiteral("void quote list search")
+    );
+    require(voidPage.value(QStringLiteral("total")).toInteger() == 1,
+            QStringLiteral("void quote was not returned by filtered list"));
+    std::cout << "[PASS] quote restart, update, conflict, issue, snapshots, clone, void and delete completed\n";
+}
+
 void verifyPersistedData(
     HttpClient& client,
     const WorkflowConfig& config,
@@ -637,7 +1047,8 @@ void runWorkflow(const WorkflowConfig& config) {
 
     const auto activeToken = login(client, config.permanentPassword, false);
     std::cout << "[PASS] permanent password login completed\n";
-    const auto records = createAndModifyBusinessData(client, config, activeToken);
+    auto records = createAndModifyBusinessData(client, config, activeToken);
+    createQuoteDraft(client, config, activeToken, records);
 
     expectStatus(
         client.sendJson(
@@ -672,6 +1083,9 @@ void runWorkflow(const WorkflowConfig& config) {
     }
     const auto afterRestartToken = login(client, config.permanentPassword, false);
     verifyPersistedData(client, config, records, afterRestartToken);
+    completeQuoteLifecycleAfterRestart(
+        client, config, records, afterRestartToken
+    );
     std::cout << "[PASS] complete backend E2E workflow\n";
 }
 
