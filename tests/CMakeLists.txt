@@ -87,6 +87,28 @@ if(TARGET Manage::Data)
             WILL_FAIL TRUE
             ENVIRONMENT "MANAGE_TEST_MYSQL=1;MANAGE_DB_NAME=manage"
     )
+
+    add_executable(manage_quote_mysql_tests
+        data/quote_lifecycle_mysql_tests.cpp
+    )
+    target_link_libraries(
+        manage_quote_mysql_tests
+        PRIVATE
+            Manage::Data
+            Qt6::Core
+            Qt6::Sql
+    )
+    manage_apply_project_options(manage_quote_mysql_tests)
+    add_test(NAME manage.data.quote_mysql_integration
+             COMMAND manage_quote_mysql_tests)
+    add_test(NAME manage.data.quote_mysql_safety
+             COMMAND manage_quote_mysql_tests)
+    set_tests_properties(
+        manage.data.quote_mysql_safety
+        PROPERTIES
+            WILL_FAIL TRUE
+            ENVIRONMENT "MANAGE_TEST_MYSQL=1;MANAGE_DB_NAME=manage"
+    )
 endif()
 
 if(TARGET Manage::Server)
@@ -160,6 +182,8 @@ if(TARGET Manage::Server)
         manage.data.bom_service
         manage.data.bom_mysql_integration
         manage.data.bom_mysql_safety
+        manage.data.quote_mysql_integration
+        manage.data.quote_mysql_safety
         manage.server.api
         manage.server.catalog_routes
         manage.server.bom_routes
