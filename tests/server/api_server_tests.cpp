@@ -118,7 +118,8 @@ void healthEndpointReportsServiceAndDatabaseDriver(
 
 void calculateEndpointUsesDomainRules(
     QNetworkAccessManager& network,
-    quint16 port
+    quint16 port,
+    const QByteArray& bearerToken
 ) {
     const QJsonObject requestObject{
         {
@@ -142,16 +143,13 @@ void calculateEndpointUsesDomainRules(
         {QStringLiteral("taxBasisPoints"), 1'300},
     };
 
-    QNetworkRequest request(endpoint(
+    const auto response = postJson(
+        network,
         port,
-        QStringLiteral("/api/v1/quotes/calculate")
-    ));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-
-    const auto response = waitForReply(network.post(
-        request,
-        QJsonDocument(requestObject).toJson(QJsonDocument::Compact)
-    ));
+        QStringLiteral("/api/v1/quotes/calculate"),
+        requestObject,
+        bearerToken
+    );
     require(response.status == 200, "calculate endpoint must return HTTP 200");
 
     const auto object = QJsonDocument::fromJson(response.body).object();
@@ -171,7 +169,8 @@ void calculateEndpointUsesDomainRules(
 
 void calculateEndpointReturnsStructuredValidationErrors(
     QNetworkAccessManager& network,
-    quint16 port
+    quint16 port,
+    const QByteArray& bearerToken
 ) {
     const QJsonObject requestObject{
         {
@@ -186,16 +185,13 @@ void calculateEndpointReturnsStructuredValidationErrors(
         },
     };
 
-    QNetworkRequest request(endpoint(
+    const auto response = postJson(
+        network,
         port,
-        QStringLiteral("/api/v1/quotes/calculate")
-    ));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-
-    const auto response = waitForReply(network.post(
-        request,
-        QJsonDocument(requestObject).toJson(QJsonDocument::Compact)
-    ));
+        QStringLiteral("/api/v1/quotes/calculate"),
+        requestObject,
+        bearerToken
+    );
     require(response.status == 400, "invalid quote must return HTTP 400");
 
     const auto object = QJsonDocument::fromJson(response.body).object();
@@ -210,7 +206,7 @@ void calculateEndpointReturnsStructuredValidationErrors(
     );
 }
 
-void authenticationEndpointsCoverTheSessionLifecycle(
+QByteArray authenticationEndpointsStartTheSession(
     QNetworkAccessManager& network,
     quint16 port
 ) {
@@ -274,6 +270,23 @@ void authenticationEndpointsCoverTheSessionLifecycle(
         "first login reports required password change"
     );
 
+    const auto blockedQuote = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/quotes/calculate"),
+        QJsonObject{},
+        token
+    );
+    require(blockedQuote.status == 403,
+            "first-login session cannot calculate quotes");
+    require(
+        QJsonDocument::fromJson(blockedQuote.body)
+                .object()
+                .value(QStringLiteral("error"))
+                .toString() == QStringLiteral("password_change_required"),
+        "first-login business rejection has stable error code"
+    );
+
     const auto rejectedChange = postJson(
         network,
         port,
@@ -329,6 +342,50 @@ void authenticationEndpointsCoverTheSessionLifecycle(
         "password change clears required flag"
     );
 
+    return token;
+}
+
+void quoteAuthorizationRules(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& token,
+    manage::tests::FakeUserRepository& repository
+) {
+    const auto missing = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/quotes/calculate"),
+        QJsonObject{}
+    );
+    require(missing.status == 401, "quote request without token returns 401");
+
+    const auto invalid = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/quotes/calculate"),
+        QJsonObject{},
+        QByteArrayLiteral("invalid-token")
+    );
+    require(invalid.status == 401, "quote request with wrong token returns 401");
+
+    repository.setRole(manage::auth::UserRole::Viewer);
+    const auto viewer = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/quotes/calculate"),
+        QJsonObject{},
+        token
+    );
+    require(viewer.status == 403, "viewer cannot calculate quotes");
+
+    repository.setRole(manage::auth::UserRole::Quoter);
+}
+
+void logoutInvalidatesSession(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& token
+) {
     const auto logout = postJson(
         network,
         port,
@@ -374,26 +431,45 @@ int main(int argc, char* argv[]) {
     }
 
     QNetworkAccessManager network;
+    QByteArray accessToken;
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {
             "health endpoint",
             [&]() { healthEndpointReportsServiceAndDatabaseDriver(network, port); }
         },
         {
+            "authentication lifecycle",
+            [&]() {
+                accessToken = authenticationEndpointsStartTheSession(
+                    network,
+                    port
+                );
+            }
+        },
+        {
+            "quote authorization",
+            [&]() {
+                quoteAuthorizationRules(
+                    network,
+                    port,
+                    accessToken,
+                    *repository
+                );
+            }
+        },
+        {
             "calculate endpoint",
-            [&]() { calculateEndpointUsesDomainRules(network, port); }
+            [&]() { calculateEndpointUsesDomainRules(network, port, accessToken); }
         },
         {
             "validation errors",
-            [&]() {
-                calculateEndpointReturnsStructuredValidationErrors(network, port);
-            }
+            [&]() { calculateEndpointReturnsStructuredValidationErrors(
+                network, port, accessToken
+            ); }
         },
         {
-            "authentication lifecycle",
-            [&]() {
-                authenticationEndpointsCoverTheSessionLifecycle(network, port);
-            }
+            "logout invalidation",
+            [&]() { logoutInvalidatesSession(network, port, accessToken); }
         },
     };
 

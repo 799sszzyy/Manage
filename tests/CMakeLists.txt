@@ -122,6 +122,10 @@ if(TARGET Manage::Server)
     add_executable(manage_bom_routes_tests
         server/bom_routes_tests.cpp
     )
+    target_include_directories(
+        manage_bom_routes_tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    )
     target_link_libraries(manage_bom_routes_tests
         PRIVATE
             Manage::Server

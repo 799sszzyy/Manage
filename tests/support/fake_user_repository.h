@@ -82,6 +82,7 @@ public:
     }
 
     void disableAccount() { account_.enabled = false; }
+    void setRole(manage::auth::UserRole role) { account_.role = role; }
 
 private:
     static void clearError(QString* errorMessage) {
