@@ -200,4 +200,28 @@ if(TARGET Manage::Desktop)
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
     )
+
+    add_executable(manage_bom_quote_widget_tests
+        desktop/bom_quote_widget_tests.cpp
+    )
+    target_link_libraries(
+        manage_bom_quote_widget_tests
+        PRIVATE
+            Manage::Desktop
+            Qt6::Core
+            Qt6::HttpServer
+            Qt6::Network
+            Qt6::Widgets
+    )
+    manage_apply_project_options(manage_bom_quote_widget_tests)
+    add_test(
+        NAME manage.desktop.bom_quote_widget
+        COMMAND manage_bom_quote_widget_tests
+    )
+    set_tests_properties(
+        manage.desktop.bom_quote_widget
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
 endif()

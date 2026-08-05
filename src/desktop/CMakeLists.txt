@@ -1,6 +1,8 @@
 add_library(manage_desktop_lib STATIC
     include/manage/desktop/api_client.h
+    include/manage/desktop/bom_quote_widget.h
     src/api_client.cpp
+    src/bom_quote_widget.cpp
     src/main_window.cpp
 )
 
