@@ -7,6 +7,16 @@ manage_apply_project_options(manage_domain_tests)
 
 add_test(NAME manage.domain.quote_calculator COMMAND manage_domain_tests)
 
+if(TARGET Manage::Auth)
+    add_executable(manage_auth_tests
+        auth/auth_service_tests.cpp
+    )
+    target_include_directories(manage_auth_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(manage_auth_tests PRIVATE Manage::Auth Qt6::Core)
+    manage_apply_project_options(manage_auth_tests)
+    add_test(NAME manage.auth.service COMMAND manage_auth_tests)
+endif()
+
 if(TARGET Manage::Data)
     add_executable(manage_data_tests
         data/migration_runner_tests.cpp
@@ -34,6 +44,7 @@ if(TARGET Manage::Server)
             Qt6::Core
             Qt6::Network
     )
+    target_include_directories(manage_server_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     manage_apply_project_options(manage_server_tests)
 
     add_test(NAME manage.server.api COMMAND manage_server_tests)
@@ -42,6 +53,7 @@ if(TARGET Manage::Server)
 
     set_tests_properties(
         manage.data.migrations
+        manage.auth.service
         manage.server.api
         manage.server.smoke
         PROPERTIES
