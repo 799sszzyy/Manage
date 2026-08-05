@@ -508,8 +508,10 @@ void temporaryPasswordBlocksCatalogUntilChanged(CatalogApi& api) {
         "password change must automatically load both catalog lists"
     );
     require(
-        child<QPushButton>(widget, "materialAddButton")->isEnabled() &&
-            child<QPushButton>(widget, "customerAddButton")->isEnabled(),
+        waitUntil([&]() {
+            return child<QPushButton>(widget, "materialAddButton")->isEnabled() &&
+                child<QPushButton>(widget, "customerAddButton")->isEnabled();
+        }),
         "admin write controls must recover after password change"
     );
 }
