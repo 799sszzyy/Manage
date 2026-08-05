@@ -2,6 +2,30 @@ add_executable(manage_domain_tests
     domain/quote_calculator_tests.cpp
 )
 
+if(MANAGE_ENABLE_QT)
+    add_executable(manage_excel_workbook_tests
+        excel/workbook_service_tests.cpp
+    )
+    target_link_libraries(manage_excel_workbook_tests PRIVATE
+        Manage::Excel
+        Qt6::Core
+        QXlsx::QXlsx
+    )
+    manage_apply_project_options(manage_excel_workbook_tests)
+    add_test(NAME manage.excel.workbook COMMAND manage_excel_workbook_tests)
+
+    add_executable(manage_material_batch_tests
+        data/material_batch_service_tests.cpp
+    )
+    target_link_libraries(manage_material_batch_tests PRIVATE
+        Manage::Data
+        Qt6::Core
+        Qt6::Sql
+    )
+    manage_apply_project_options(manage_material_batch_tests)
+    add_test(NAME manage.data.material_batch COMMAND manage_material_batch_tests)
+endif()
+
 target_link_libraries(manage_domain_tests PRIVATE Manage::Domain)
 manage_apply_project_options(manage_domain_tests)
 
@@ -15,6 +39,13 @@ if(TARGET Manage::Auth)
     target_link_libraries(manage_auth_tests PRIVATE Manage::Auth Qt6::Core)
     manage_apply_project_options(manage_auth_tests)
     add_test(NAME manage.auth.service COMMAND manage_auth_tests)
+
+    add_executable(manage_user_management_tests
+        auth/user_management_tests.cpp
+    )
+    target_link_libraries(manage_user_management_tests PRIVATE Manage::Auth Qt6::Core)
+    manage_apply_project_options(manage_user_management_tests)
+    add_test(NAME manage.auth.user_management COMMAND manage_user_management_tests)
 endif()
 
 if(TARGET Manage::Data)
@@ -109,6 +140,16 @@ if(TARGET Manage::Data)
             WILL_FAIL TRUE
             ENVIRONMENT "MANAGE_TEST_MYSQL=1;MANAGE_DB_NAME=manage"
     )
+
+    add_executable(manage_statistics_repository_tests
+        data/statistics_repository_tests.cpp
+    )
+    target_link_libraries(manage_statistics_repository_tests
+        PRIVATE Manage::Data Qt6::Core Qt6::Sql
+    )
+    manage_apply_project_options(manage_statistics_repository_tests)
+    add_test(NAME manage.data.statistics_repository
+             COMMAND manage_statistics_repository_tests)
 endif()
 
 if(TARGET Manage::Server)
@@ -189,12 +230,31 @@ if(TARGET Manage::Server)
     manage_apply_project_options(manage_quote_routes_tests)
     add_test(NAME manage.server.quote_routes COMMAND manage_quote_routes_tests)
 
+    add_executable(manage_user_routes_tests
+        server/user_routes_tests.cpp
+    )
+    target_include_directories(manage_user_routes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(manage_user_routes_tests PRIVATE Manage::Server Qt6::Core Qt6::Network)
+    manage_apply_project_options(manage_user_routes_tests)
+    add_test(NAME manage.server.user_routes COMMAND manage_user_routes_tests)
+
+    add_executable(manage_statistics_routes_tests
+        server/statistics_routes_tests.cpp
+    )
+    target_include_directories(manage_statistics_routes_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(manage_statistics_routes_tests
+        PRIVATE Manage::Server Qt6::Core Qt6::Network
+    )
+    manage_apply_project_options(manage_statistics_routes_tests)
+    add_test(NAME manage.server.statistics_routes COMMAND manage_statistics_routes_tests)
+
     add_test(NAME manage.server.smoke COMMAND manage_server --smoke-test)
     add_test(NAME manage.desktop.smoke COMMAND manage_desktop --smoke-test)
 
     set_tests_properties(
         manage.data.migrations
         manage.auth.service
+        manage.auth.user_management
         manage.data.catalog_service
         manage.data.catalog_repository_mysql
         manage.data.bom_service
@@ -202,10 +262,13 @@ if(TARGET Manage::Server)
         manage.data.bom_mysql_safety
         manage.data.quote_mysql_integration
         manage.data.quote_mysql_safety
+        manage.data.statistics_repository
         manage.server.api
         manage.server.catalog_routes
         manage.server.bom_routes
         manage.server.quote_routes
+        manage.server.user_routes
+        manage.server.statistics_routes
         manage.server.smoke
         manage.backend_e2e.self_test
         PROPERTIES
@@ -316,6 +379,28 @@ if(TARGET Manage::Desktop)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
     )
 
+    add_executable(manage_bom_drag_widgets_tests
+        desktop/bom_drag_widgets_tests.cpp
+    )
+    target_link_libraries(
+        manage_bom_drag_widgets_tests
+        PRIVATE
+            Manage::Desktop
+            Qt6::Core
+            Qt6::Widgets
+    )
+    manage_apply_project_options(manage_bom_drag_widgets_tests)
+    add_test(
+        NAME manage.desktop.bom_drag_widgets
+        COMMAND manage_bom_drag_widgets_tests
+    )
+    set_tests_properties(
+        manage.desktop.bom_drag_widgets
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
+
     add_executable(manage_quote_management_widget_tests
         desktop/quote_management_widget_tests.cpp
     )
@@ -338,5 +423,31 @@ if(TARGET Manage::Desktop)
         PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
+
+    add_executable(manage_user_management_widget_tests
+        desktop/user_management_widget_tests.cpp
+    )
+    target_link_libraries(manage_user_management_widget_tests
+        PRIVATE Manage::Desktop Qt6::Core Qt6::HttpServer Qt6::Network Qt6::Widgets
+    )
+    manage_apply_project_options(manage_user_management_widget_tests)
+    add_test(NAME manage.desktop.user_management_widget COMMAND manage_user_management_widget_tests)
+    set_tests_properties(manage.desktop.user_management_widget PROPERTIES
+        ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
+
+    add_executable(manage_statistics_widget_tests
+        desktop/statistics_widget_tests.cpp
+    )
+    target_link_libraries(manage_statistics_widget_tests
+        PRIVATE Manage::Desktop Qt6::Core Qt6::HttpServer Qt6::Network Qt6::Widgets
+    )
+    manage_apply_project_options(manage_statistics_widget_tests)
+    add_test(NAME manage.desktop.statistics_widget COMMAND manage_statistics_widget_tests)
+    set_tests_properties(manage.desktop.statistics_widget PROPERTIES
+        ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
     )
 endif()

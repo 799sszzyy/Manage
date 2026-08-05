@@ -1,6 +1,7 @@
 add_library(manage_auth STATIC
     src/auth_service.cpp
     src/password_hasher.cpp
+    src/user_management.cpp
 )
 
 add_library(Manage::Auth ALIAS manage_auth)
