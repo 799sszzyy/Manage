@@ -28,15 +28,15 @@ void require(bool condition, const std::string& message) {
     }
 }
 
-void builtInCatalogContainsTheInitialSchema() {
+void builtInCatalogContainsThePublishedSchemas() {
     QString error;
     const auto migrations = manage::data::MigrationRunner::builtInMigrations(
         &error
     );
 
     require(error.isEmpty(), error.toStdString());
-    require(migrations.size() == 1, "exactly one built-in migration expected");
-    const auto& migration = migrations.front();
+    require(migrations.size() == 2, "two built-in migrations expected");
+    const auto& migration = migrations.at(0);
     require(migration.version == 1, "initial migration version");
     require(
         migration.name == QStringLiteral("001_initial_schema"),
@@ -66,6 +66,26 @@ void builtInCatalogContainsTheInitialSchema() {
     require(
         migration.sql.contains(QStringLiteral("'admin'")),
         "bootstrap admin record"
+    );
+
+    const auto& quoteMigration = migrations.at(1);
+    require(quoteMigration.version == 2, "quote BOM migration version");
+    require(
+        quoteMigration.name == QStringLiteral("002_quote_bom_template"),
+        "quote BOM migration name"
+    );
+    require(quoteMigration.checksum.size() == 64, "quote migration checksum");
+    require(
+        quoteMigration.sql.contains(QStringLiteral("ADD COLUMN bom_template_id")),
+        "quote migration adds optional BOM reference"
+    );
+    require(
+        quoteMigration.sql.contains(QStringLiteral("ix_quotes_bom_template")),
+        "quote migration adds BOM lookup index"
+    );
+    require(
+        quoteMigration.sql.contains(QStringLiteral("fk_quotes_bom_template")),
+        "quote migration adds BOM foreign key"
     );
 }
 
@@ -126,11 +146,11 @@ void optionalMySqlIntegrationTest() {
     manage::data::MigrationRunner runner(connection.database());
     manage::data::MigrationReport firstReport;
     require(runner.migrate(&firstReport, &error), error.toStdString());
-    require(firstReport.currentVersion == 1, "database schema version after migrate");
+    require(firstReport.currentVersion == 2, "database schema version after migrate");
 
     manage::data::MigrationReport secondReport;
     require(runner.migrate(&secondReport, &error), error.toStdString());
-    require(secondReport.currentVersion == 1, "schema version after repeat migrate");
+    require(secondReport.currentVersion == 2, "schema version after repeat migrate");
     require(secondReport.appliedCount == 0, "repeat migration must be idempotent");
 
     QSqlQuery query(connection.database());
@@ -164,7 +184,7 @@ int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
 
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
-        {"built-in catalog", builtInCatalogContainsTheInitialSchema},
+        {"built-in catalog", builtInCatalogContainsThePublishedSchemas},
         {"SQL splitter", splitterPreservesQuotedSemicolonsAndRemovesComments},
         {"invalid SQL", splitterRejectsUnterminatedInput},
         {"optional MySQL integration", optionalMySqlIntegrationTest},
