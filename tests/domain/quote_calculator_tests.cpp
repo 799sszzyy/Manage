@@ -80,6 +80,24 @@ void calculatesQuoteUsingSnapshotsAndFixedPointMath() {
     requireCents(result.priceWithTax, 6'488, "price with tax");
 }
 
+void calculatesTheUserManualExample() {
+    QuoteCalculationInput input;
+    input.lines = {
+        // Ten M8 bolts at CNY 1.20 each. Quantities are stored in millionths
+        // and money in cents so the calculation never uses floating point.
+        QuoteLineInput{"DEMO-M8", 10'000'000, Money::fromCents(120)},
+    };
+    input.freight = Money::fromCents(500);
+    input.markupBasisPoints = 1'000;
+    input.taxBasisPoints = 1'300;
+
+    const auto result = calculateQuote(input);
+    requireCents(result.materialCost, 1'200, "manual example material cost");
+    requireCents(result.priceBeforeTax, 1'870, "manual example price before tax");
+    requireCents(result.taxAmount, 243, "manual example tax");
+    requireCents(result.priceWithTax, 2'113, "manual example total");
+}
+
 void roundsHalfUpToTheNearestCent() {
     QuoteCalculationInput input;
     input.lines = {
@@ -171,6 +189,7 @@ void reportsOverflowWithoutUndefinedBehavior() {
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"calculates quote", calculatesQuoteUsingSnapshotsAndFixedPointMath},
+        {"calculates user manual example", calculatesTheUserManualExample},
         {"rounds half up", roundsHalfUpToTheNearestCent},
         {"accepts percentage boundaries", acceptsPercentageBoundaries},
         {"rejects invalid lines", rejectsInvalidLineValues},

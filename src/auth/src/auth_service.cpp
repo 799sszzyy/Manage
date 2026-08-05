@@ -184,6 +184,9 @@ AuthResult AuthService::login(
         );
     }
 
+    // Only the random token is returned to the client. The server stores a
+    // digest as the session key, so an in-memory dump does not reveal a token
+    // that can be replayed directly.
     SessionInfo session;
     session.accessToken = generateAccessToken();
     session.expiresAtUtc = QDateTime::currentDateTimeUtc().addSecs(

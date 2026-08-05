@@ -51,7 +51,6 @@ option(BUILD_SHARED_LIBS "Build in shared lib mode" OFF)
 
 set(SRC_FILES
     source/xlsxcellrange.cpp
-    source/xlsxcellrange.cpp
     source/xlsxcontenttypes.cpp
     source/xlsxdrawinganchor.cpp
     source/xlsxrichstring.cpp

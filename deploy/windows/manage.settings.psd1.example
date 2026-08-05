@@ -1,0 +1,24 @@
+@{
+    Database = @{
+        Host = '127.0.0.1'
+        Port = 3306
+        Name = 'manage'
+        User = 'manage_app'
+    }
+    Server = @{
+        # Keep 127.0.0.1 for one PC. For a LAN server use 0.0.0.0 and AllowLan=$true.
+        ListenAddress = '127.0.0.1'
+        Port = 18080
+        AllowLan = $false
+    }
+    Desktop = @{
+        # On a client PC, use the server LAN IP, for example http://192.168.1.20:18080.
+        ApiUrl = 'http://127.0.0.1:18080'
+    }
+    MySql = @{
+        BinDirectory = 'C:\Program Files\MySQL\MySQL Server 8.4\bin'
+    }
+    Backup = @{
+        Directory = 'backups'
+    }
+}
