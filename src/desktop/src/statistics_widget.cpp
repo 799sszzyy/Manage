@@ -1,10 +1,13 @@
 #include "manage/desktop/statistics_widget.h"
 
 #include "manage/desktop/api_client.h"
+#include "manage/excel/workbook_service.h"
 
 #include <QComboBox>
 #include <QDate>
 #include <QDateEdit>
+#include <QFile>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -68,6 +71,20 @@ void fillTable(QTableWidget* table, const QJsonArray& rows) {
     }
 }
 
+std::vector<manage::excel::StatisticsRow> workbookRows(const QJsonArray& rows) {
+    std::vector<manage::excel::StatisticsRow> result;
+    result.reserve(static_cast<std::size_t>(rows.size()));
+    for (const auto& value : rows) {
+        const auto row = value.toObject();
+        result.push_back({
+            row.value(QStringLiteral("label")).toString(),
+            row.value(QStringLiteral("quoteCount")).toInteger(),
+            row.value(QStringLiteral("totalAmountCents")).toInteger(),
+        });
+    }
+    return result;
+}
+
 QString friendlyError(const ApiResponse& response) {
     if (response.error.kind == ApiErrorKind::Network) return QStringLiteral("无法连接服务：%1").arg(response.error.message);
     if (response.error.code == QStringLiteral("forbidden")) return QStringLiteral("当前账号无权查看统计。管理员、报价员和查看员均应具有只读权限。");
@@ -112,6 +129,9 @@ StatisticsWidget::StatisticsWidget(ApiClient* apiClient, QWidget* parent)
     statusCombo_->addItem(QStringLiteral("已作废"), QStringLiteral("void"));
     refreshButton_ = new QPushButton(QStringLiteral("查询统计"), filterBox);
     refreshButton_->setObjectName(QStringLiteral("statisticsRefreshButton"));
+    exportButton_ = new QPushButton(QStringLiteral("导出 Excel"), filterBox);
+    exportButton_->setObjectName(QStringLiteral("statisticsExportButton"));
+    exportButton_->setEnabled(false);
     filters->addWidget(new QLabel(QStringLiteral("开始日期"), filterBox), 0, 0);
     filters->addWidget(startDateEdit_, 0, 1);
     filters->addWidget(new QLabel(QStringLiteral("结束日期"), filterBox), 0, 2);
@@ -121,6 +141,7 @@ StatisticsWidget::StatisticsWidget(ApiClient* apiClient, QWidget* parent)
     filters->addWidget(new QLabel(QStringLiteral("报价状态"), filterBox), 1, 2);
     filters->addWidget(statusCombo_, 1, 3);
     filters->addWidget(refreshButton_, 1, 4);
+    filters->addWidget(exportButton_, 1, 5);
     root->addWidget(filterBox);
 
     messageLabel_ = new QLabel(this);
@@ -155,6 +176,7 @@ StatisticsWidget::StatisticsWidget(ApiClient* apiClient, QWidget* parent)
     root->addWidget(tabs, 1);
 
     connect(refreshButton_, &QPushButton::clicked, this, [this]() { refresh(); });
+    connect(exportButton_, &QPushButton::clicked, this, [this]() { exportReport(); });
 }
 
 void StatisticsWidget::refresh() {
@@ -183,9 +205,12 @@ void StatisticsWidget::refresh() {
 void StatisticsWidget::showReport(const ApiResponse& response) {
     setBusy(false);
     if (!response.succeeded()) {
+        currentReport_ = {};
+        exportButton_->setEnabled(false);
         messageLabel_->setText(friendlyError(response));
         return;
     }
+    currentReport_ = response.body;
     const auto summary = response.body.value(QStringLiteral("summary")).toObject();
     quoteCountLabel_->setText(QString::number(summary.value(QStringLiteral("quoteCount")).toInteger()));
     totalAmountLabel_->setText(money(summary.value(QStringLiteral("totalAmountCents")).toInteger()));
@@ -197,6 +222,62 @@ void StatisticsWidget::showReport(const ApiResponse& response) {
     fillTable(customerTable_, response.body.value(QStringLiteral("byCustomer")).toArray());
     fillTable(categoryTable_, response.body.value(QStringLiteral("byMaterialCategory")).toArray());
     messageLabel_->setText(QStringLiteral("统计已更新。所有金额均来自服务端数据库，页面只负责显示。"));
+    exportButton_->setEnabled(true);
+}
+
+void StatisticsWidget::exportReport() {
+    if (currentReport_.isEmpty()) {
+        messageLabel_->setText(QStringLiteral("请先查询统计，再导出 Excel。"));
+        return;
+    }
+    auto path = QFileDialog::getSaveFileName(
+        this,
+        QStringLiteral("导出报价统计"),
+        QStringLiteral("报价统计.xlsx"),
+        QStringLiteral("Excel 工作簿 (*.xlsx)")
+    );
+    if (path.isEmpty()) {
+        return;
+    }
+    if (!path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive)) {
+        path += QStringLiteral(".xlsx");
+    }
+
+    const auto filters = currentReport_.value(QStringLiteral("filters")).toObject();
+    const auto summary = currentReport_.value(QStringLiteral("summary")).toObject();
+    manage::excel::StatisticsWorkbook workbook;
+    workbook.title = QStringLiteral("报价统计（发布率不是成交率）");
+    workbook.fromDate = filters.value(QStringLiteral("startDate")).toString();
+    workbook.toDate = filters.value(QStringLiteral("endDate")).toString();
+    workbook.summary.quoteCount = summary.value(QStringLiteral("quoteCount")).toInteger();
+    workbook.summary.totalCents = summary.value(QStringLiteral("totalAmountCents")).toInteger();
+    workbook.summary.averageCents = summary.value(QStringLiteral("averageAmountCents")).toInteger();
+    workbook.summary.issuedCount = summary.value(QStringLiteral("issuedCount")).toInteger();
+    workbook.summary.voidCount = summary.value(QStringLiteral("voidCount")).toInteger();
+    workbook.summary.publishedRate =
+        static_cast<double>(summary.value(QStringLiteral("publishedRateBasisPoints")).toInt()) /
+        10'000.0;
+    workbook.monthly = workbookRows(currentReport_.value(QStringLiteral("byMonth")).toArray());
+    workbook.customers = workbookRows(currentReport_.value(QStringLiteral("byCustomer")).toArray());
+    workbook.categories = workbookRows(
+        currentReport_.value(QStringLiteral("byMaterialCategory")).toArray()
+    );
+
+    QFile output(path);
+    if (!output.open(QIODevice::WriteOnly)) {
+        messageLabel_->setText(QStringLiteral("无法保存 Excel：%1").arg(output.errorString()));
+        return;
+    }
+    QString error;
+    const auto saved = manage::excel::WorkbookService::exportStatistics(
+        &output,
+        workbook,
+        &error
+    );
+    messageLabel_->setText(
+        saved ? QStringLiteral("统计 Excel 已保存：%1").arg(path)
+              : QStringLiteral("导出统计 Excel 失败：%1").arg(error)
+    );
 }
 
 void StatisticsWidget::setBusy(bool busy) {
@@ -205,6 +286,7 @@ void StatisticsWidget::setBusy(bool busy) {
     endDateEdit_->setEnabled(!busy);
     customerIdEdit_->setEnabled(!busy);
     statusCombo_->setEnabled(!busy);
+    exportButton_->setEnabled(!busy && !currentReport_.isEmpty());
 }
 
 } // namespace manage::desktop

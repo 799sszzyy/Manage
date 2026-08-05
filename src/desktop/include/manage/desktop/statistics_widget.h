@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonObject>
 #include <QWidget>
 
 class QComboBox;
@@ -22,6 +23,7 @@ public:
 
 private:
     void showReport(const ApiResponse& response);
+    void exportReport();
     void setBusy(bool busy);
 
     ApiClient* apiClient_{};
@@ -30,6 +32,7 @@ private:
     QLineEdit* customerIdEdit_{};
     QComboBox* statusCombo_{};
     QPushButton* refreshButton_{};
+    QPushButton* exportButton_{};
     QLabel* messageLabel_{};
     QLabel* quoteCountLabel_{};
     QLabel* totalAmountLabel_{};
@@ -40,6 +43,7 @@ private:
     QTableWidget* monthTable_{};
     QTableWidget* customerTable_{};
     QTableWidget* categoryTable_{};
+    QJsonObject currentReport_;
 };
 
 } // namespace manage::desktop

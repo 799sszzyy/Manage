@@ -1,11 +1,14 @@
 #include "manage/auth/auth_service.h"
+#include "manage/auth/user_management.h"
 #include "manage/data/bom_service.h"
 #include "manage/data/catalog_repository.h"
 #include "manage/data/database_config.h"
 #include "manage/data/database_connection.h"
 #include "manage/data/migration_runner.h"
+#include "manage/data/material_batch_service.h"
 #include "manage/data/mysql_bom_repository.h"
 #include "manage/data/mysql_quote_lifecycle.h"
+#include "manage/data/mysql_statistics_repository.h"
 #include "manage/data/mysql_user_repository.h"
 #include "manage/server/api_server.h"
 
@@ -63,10 +66,13 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<manage::data::DatabaseConnection> databaseConnection;
     std::shared_ptr<manage::auth::AuthService> authService;
+    std::shared_ptr<manage::auth::UserManagementService> userManagementService;
     std::shared_ptr<manage::data::CatalogRepository> catalogRepository;
     std::unique_ptr<manage::data::MySqlBomRepository> bomRepository;
     std::unique_ptr<manage::data::BomService> bomService;
     std::unique_ptr<manage::data::MySqlQuoteLifecycle> quoteLifecycle;
+    std::unique_ptr<manage::data::MySqlStatisticsRepository> statisticsRepository;
+    std::unique_ptr<manage::data::MaterialBatchService> materialBatchService;
     if (!parser.isSet(smokeTestOption)) {
         databaseConnection = std::make_unique<manage::data::DatabaseConnection>(
             manage::data::DatabaseConfig::fromEnvironment()
@@ -101,8 +107,14 @@ int main(int argc, char* argv[]) {
                 databaseConnection->database()
             );
         authService = std::make_shared<manage::auth::AuthService>(
-            std::move(userRepository)
+            std::static_pointer_cast<manage::auth::UserRepository>(userRepository)
         );
+        userManagementService =
+            std::make_shared<manage::auth::UserManagementService>(
+                std::static_pointer_cast<manage::auth::UserManagementRepository>(
+                    userRepository
+                )
+            );
         catalogRepository = std::make_shared<manage::data::MySqlCatalogRepository>(
             databaseConnection->database()
         );
@@ -113,13 +125,24 @@ int main(int argc, char* argv[]) {
         quoteLifecycle = std::make_unique<manage::data::MySqlQuoteLifecycle>(
             databaseConnection->database()
         );
+        statisticsRepository =
+            std::make_unique<manage::data::MySqlStatisticsRepository>(
+                databaseConnection->database()
+            );
+        materialBatchService =
+            std::make_unique<manage::data::MaterialBatchService>(
+                databaseConnection->database()
+            );
     }
 
     manage::server::ApiServer server(
         std::move(authService),
         std::move(catalogRepository),
         bomService.get(),
-        quoteLifecycle.get()
+        quoteLifecycle.get(),
+        std::move(userManagementService),
+        statisticsRepository.get(),
+        materialBatchService.get()
     );
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)

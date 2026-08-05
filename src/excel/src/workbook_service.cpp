@@ -479,14 +479,14 @@ bool WorkbookService::exportStatistics(
         {QStringLiteral("平均报价"), static_cast<double>(statistics.summary.averageCents) / 100.0},
         {QStringLiteral("已报价数量"), statistics.summary.issuedCount},
         {QStringLiteral("已作废数量"), statistics.summary.voidCount},
-        {QStringLiteral("已报价占比"), statistics.summary.issuedRate},
+        {QStringLiteral("发布率（已报价 + 已作废）"), statistics.summary.publishedRate},
     };
     int row = 4;
     for (const auto& [label, value] : values) {
         document.write(row, 1, label);
         if (label == QStringLiteral("报价金额") || label == QStringLiteral("平均报价")) {
             document.write(row, 2, value, moneyFormat());
-        } else if (label == QStringLiteral("已报价占比")) {
+        } else if (label == QStringLiteral("发布率（已报价 + 已作废）")) {
             document.write(row, 2, value, percentageFormat());
         } else {
             document.write(row, 2, value);
