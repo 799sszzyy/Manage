@@ -200,4 +200,28 @@ if(TARGET Manage::Desktop)
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
     )
+
+    add_executable(manage_desktop_login_flow_tests
+        desktop/main_window_login_flow_tests.cpp
+    )
+    target_link_libraries(
+        manage_desktop_login_flow_tests
+        PRIVATE
+            Manage::Desktop
+            Qt6::Core
+            Qt6::HttpServer
+            Qt6::Network
+            Qt6::Widgets
+    )
+    manage_apply_project_options(manage_desktop_login_flow_tests)
+    add_test(
+        NAME manage.desktop.login_flow
+        COMMAND manage_desktop_login_flow_tests
+    )
+    set_tests_properties(
+        manage.desktop.login_flow
+        PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;QT_QPA_PLATFORM=set:offscreen"
+    )
 endif()
