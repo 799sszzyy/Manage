@@ -119,6 +119,11 @@ struct TestApi final {
                         QStringLiteral("user"),
                         QJsonObject{
                             {QStringLiteral("username"), QStringLiteral("admin")},
+                            {
+                                QStringLiteral("displayName"),
+                                QStringLiteral("Refreshed Administrator")
+                            },
+                            {QStringLiteral("role"), QStringLiteral("quoter")},
                             {QStringLiteral("mustChangePassword"), false},
                         }
                     },
@@ -136,7 +141,15 @@ struct TestApi final {
                     {QStringLiteral("status"), QStringLiteral("password_changed")},
                     {
                         QStringLiteral("user"),
-                        QJsonObject{{QStringLiteral("mustChangePassword"), false}}
+                        QJsonObject{
+                            {QStringLiteral("username"), QStringLiteral("admin")},
+                            {
+                                QStringLiteral("displayName"),
+                                QStringLiteral("Password Changed Administrator")
+                            },
+                            {QStringLiteral("role"), QStringLiteral("admin")},
+                            {QStringLiteral("mustChangePassword"), false},
+                        }
                     },
                 });
             }
@@ -313,6 +326,15 @@ void loginStoresMemorySessionAndInjectsBearerToken(TestApi& api) {
 
 void authWrappersRefreshAndClearSession(TestApi& api) {
     ApiClient client(api.baseUrl());
+    int authenticatedNotifications{};
+    int unauthenticatedNotifications{};
+    QObject::connect(&client, &ApiClient::sessionChanged, [&](bool authenticated) {
+        if (authenticated) {
+            ++authenticatedNotifications;
+        } else {
+            ++unauthenticatedNotifications;
+        }
+    });
     const auto login = waitFor([&](ApiClient::Callback callback) {
         client.login(
             QStringLiteral("admin"),
@@ -321,6 +343,9 @@ void authWrappersRefreshAndClearSession(TestApi& api) {
         );
     });
     require(login.succeeded(), "login setup must succeed");
+    const auto accessToken = client.session().accessToken;
+    require(authenticatedNotifications == 1,
+            "login must publish one authenticated session notification");
 
     const auto me = waitFor([&](ApiClient::Callback callback) {
         client.me(std::move(callback));
@@ -332,6 +357,19 @@ void authWrappersRefreshAndClearSession(TestApi& api) {
              .toBool(true),
         "me must refresh the cached user"
     );
+    require(
+        client.session().user.value(QStringLiteral("role")).toString() ==
+            QStringLiteral("quoter"),
+        "me must replace the cached role"
+    );
+    require(
+        client.session().expiresAt == QStringLiteral("2026-08-06T13:00:00Z"),
+        "me must refresh the cached expiry"
+    );
+    require(client.session().accessToken == accessToken,
+            "me must retain the active access token");
+    require(authenticatedNotifications == 2,
+            "me must notify modules after refreshing the session user");
 
     const auto changed = waitFor([&](ApiClient::Callback callback) {
         client.changePassword(
@@ -341,6 +379,20 @@ void authWrappersRefreshAndClearSession(TestApi& api) {
         );
     });
     require(changed.succeeded(), "change-password request must succeed");
+    require(
+        client.session().user.value(QStringLiteral("displayName")).toString() ==
+            QStringLiteral("Password Changed Administrator"),
+        "change-password must replace the cached user"
+    );
+    require(
+        client.session().user.value(QStringLiteral("role")).toString() ==
+            QStringLiteral("admin"),
+        "change-password must publish the returned role"
+    );
+    require(client.session().accessToken == accessToken,
+            "change-password must retain the active access token");
+    require(authenticatedNotifications == 3,
+            "change-password must notify modules after refreshing the user");
     require(
         api.lastBody.value(QStringLiteral("currentPassword")).toString() ==
             QStringLiteral("old password value"),
@@ -357,6 +409,8 @@ void authWrappersRefreshAndClearSession(TestApi& api) {
     });
     require(logout.succeeded(), "logout request must succeed");
     require(!client.isAuthenticated(), "successful logout must clear session");
+    require(unauthenticatedNotifications == 1,
+            "logout must publish one unauthenticated notification");
 }
 
 void errorsAreStructuredAndOnlyUnauthorizedClearsSession(TestApi& api) {
