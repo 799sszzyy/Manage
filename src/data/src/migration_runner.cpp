@@ -380,32 +380,43 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
     initializeMigrationResources();
     setError(errorMessage, {});
 
-    QFile file(QStringLiteral(":/manage/migrations/001_initial_schema.sql"));
-    if (!file.open(QIODevice::ReadOnly)) {
-        setError(
-            errorMessage,
-            QStringLiteral("unable to open built-in migration 001_initial_schema")
-        );
-        return {};
-    }
+    struct ResourceMigration final {
+        int version;
+        const char* name;
+    };
+    constexpr ResourceMigration resources[] = {
+        {1, "001_initial_schema"},
+        {2, "002_quote_bom_template"},
+    };
 
-    const auto bytes = file.readAll();
-    if (bytes.trimmed().isEmpty()) {
-        setError(
-            errorMessage,
-            QStringLiteral("built-in migration 001_initial_schema is empty")
-        );
-        return {};
-    }
+    QList<Migration> migrations;
+    for (const auto& resource : resources) {
+        const auto name = QString::fromLatin1(resource.name);
+        QFile file(QStringLiteral(":/manage/migrations/%1.sql").arg(name));
+        if (!file.open(QIODevice::ReadOnly)) {
+            setError(
+                errorMessage,
+                QStringLiteral("unable to open built-in migration %1").arg(name)
+            );
+            return {};
+        }
 
-    return {
-        Migration{
-            1,
-            QStringLiteral("001_initial_schema"),
+        const auto bytes = file.readAll();
+        if (bytes.trimmed().isEmpty()) {
+            setError(
+                errorMessage,
+                QStringLiteral("built-in migration %1 is empty").arg(name)
+            );
+            return {};
+        }
+        migrations.append(Migration{
+            resource.version,
+            name,
             QString::fromUtf8(bytes),
             QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex(),
-        },
-    };
+        });
+    }
+    return migrations;
 }
 
 QStringList MigrationRunner::splitSqlStatements(

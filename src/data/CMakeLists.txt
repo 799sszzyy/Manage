@@ -6,6 +6,7 @@ add_library(manage_data STATIC
     src/database_connection.cpp
     src/migration_runner.cpp
     src/mysql_bom_repository.cpp
+    src/mysql_quote_lifecycle.cpp
     src/mysql_user_repository.cpp
 )
 
@@ -22,6 +23,7 @@ target_link_libraries(manage_data
         Qt6::Core
         Qt6::Sql
         Manage::Auth
+        Manage::Domain
 )
 
 qt_add_resources(manage_data "manage_migrations"
@@ -29,6 +31,7 @@ qt_add_resources(manage_data "manage_migrations"
     BASE "${PROJECT_SOURCE_DIR}/db-migrations"
     FILES
         "${PROJECT_SOURCE_DIR}/db-migrations/001_initial_schema.sql"
+        "${PROJECT_SOURCE_DIR}/db-migrations/002_quote_bom_template.sql"
 )
 
 manage_apply_project_options(manage_data)

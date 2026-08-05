@@ -85,7 +85,7 @@ bool runMySqlRepositoryIntegration() {
         migrationRunner.migrate(&migrationReport, &migrationError),
         migrationError.toStdString()
     );
-    require(migrationReport.currentVersion == 1, "catalog test schema version");
+    require(migrationReport.currentVersion == 2, "catalog test schema version");
 
     auto database = connection.database();
     require(database.transaction(), "unable to start catalog integration transaction");
