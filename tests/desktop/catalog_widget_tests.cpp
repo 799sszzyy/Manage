@@ -502,19 +502,10 @@ void temporaryPasswordBlocksCatalogUntilChanged(CatalogApi& api) {
     );
 
     require(
-        QMetaObject::invokeMethod(
-            &client,
-            "sessionChanged",
-            Qt::DirectConnection,
-            Q_ARG(bool, true)
-        ),
-        "test must be able to simulate the post-password-change session broadcast"
-    );
-    require(
         waitUntil([&]() {
             return api.materialGets > materialGets && api.customerGets > customerGets;
         }),
-        "ready session broadcast must automatically load both catalog lists"
+        "password change must automatically load both catalog lists"
     );
     require(
         child<QPushButton>(widget, "materialAddButton")->isEnabled() &&
