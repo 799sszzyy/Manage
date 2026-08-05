@@ -1,6 +1,9 @@
 /build/
 /build-batch4/
+/build-final/
 /build-local/
+/build-probe*/
+/build-probe*-trace.txt
 /out/
 /.vs/
 /.docx_qa/
@@ -24,3 +27,8 @@ db-migrations/*.local.sql
 /b/
 /b5/
 /build-b5-*/
+
+# Final Windows packages, local secrets, and database backups are generated.
+/dist/
+/deploy/windows/manage.settings.psd1
+/deploy/windows/backups/

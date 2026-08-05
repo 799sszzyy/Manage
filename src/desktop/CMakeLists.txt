@@ -41,6 +41,9 @@ qt_add_executable(manage_desktop WIN32
 )
 
 target_link_libraries(manage_desktop PRIVATE Manage::Desktop)
+target_compile_definitions(manage_desktop PRIVATE
+    MANAGE_VERSION="${PROJECT_VERSION}"
+)
 manage_apply_project_options(manage_desktop)
 
 set_target_properties(manage_desktop PROPERTIES

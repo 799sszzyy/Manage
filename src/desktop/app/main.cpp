@@ -15,7 +15,7 @@
 int main(int argc, char* argv[]) {
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("manage-desktop"));
-    QApplication::setApplicationVersion(QStringLiteral("0.5.0"));
+    QApplication::setApplicationVersion(QStringLiteral(MANAGE_VERSION));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
 
     const QCommandLineOption apiUrlOption(
         QStringLiteral("api-url"),
-        QStringLiteral("Base URL of the local REST API"),
+        QStringLiteral("Base URL of the local or LAN REST API"),
         QStringLiteral("url"),
         QStringLiteral("http://127.0.0.1:18080")
     );
@@ -39,11 +39,19 @@ int main(int argc, char* argv[]) {
     parser.process(application);
 
     const QUrl apiUrl(parser.value(apiUrlOption));
+    const auto explicitPort = apiUrl.port(-1);
     if (!apiUrl.isValid() || apiUrl.scheme() != QStringLiteral("http") ||
-        apiUrl.host() != QStringLiteral("127.0.0.1")) {
-        qCritical("--api-url must be an http://127.0.0.1 URL");
+        apiUrl.host().isEmpty() || explicitPort == 0 ||
+        !apiUrl.userInfo().isEmpty() || !apiUrl.query().isEmpty() ||
+        !apiUrl.fragment().isEmpty()) {
+        qCritical(
+            "--api-url must be an http URL without credentials, query or fragment"
+        );
         return 2;
     }
+
+    // The default remains localhost. Accepting a LAN hostname/IP here lets a
+    // second Windows PC use the same API without ever exposing MySQL itself.
 
     manage::desktop::MainWindow window(apiUrl);
     window.addModuleTab(

@@ -635,6 +635,9 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::getById(qint64 id) {
 }
 
 QuoteResult<QuoteDocument> MySqlQuoteLifecycle::create(CreateQuoteCommand command) {
+    // prepareDraft reads customer/material data and freezes their display and
+    // price fields. The transaction keeps the header, snapshots and totals as
+    // one aggregate even if a later line insert fails.
     Transaction transaction(database_);
     if (!transaction.started()) {
         return failure<QuoteDocument>(
@@ -708,6 +711,8 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::update(UpdateQuoteCommand comman
     }
     QuoteStatus currentStatus;
     int currentRevision = 0;
+    // Lock + revision comparison implements optimistic concurrency: a second
+    // editor must reload instead of overwriting the first editor's changes.
     const auto locked = lockQuoteState(database_, command.id, currentStatus, currentRevision);
     if (!locked.ok()) {
         return failure<QuoteDocument>(locked.error, locked.message);
@@ -814,6 +819,8 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::changeStatus(
             QStringLiteral("quote revision conflict")
         );
     }
+    // There is deliberately no approval state in this product. A quote moves
+    // forward only through draft -> issued -> void.
     const auto legal =
         (currentStatus == QuoteStatus::Draft &&
          command.targetStatus == QuoteStatus::Issued) ||

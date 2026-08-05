@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     Manage
-    VERSION 0.5.0
-    DESCRIPTION "Local single-computer quotation management system"
+    VERSION 0.7.0
+    DESCRIPTION "Windows quotation management system for local or LAN deployment"
     LANGUAGES CXX
 )
 
@@ -13,7 +13,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MANAGE_ENABLE_QT "Configure the Qt desktop, server, and data module boundaries" ON)
 
-include(CTest)
+option(BUILD_TESTING "Build the automated test targets" ON)
+if(BUILD_TESTING)
+    enable_testing()
+endif()
 
 function(manage_apply_project_options target)
     target_compile_features(${target} PRIVATE cxx_std_17)
