@@ -17,6 +17,7 @@ namespace manage::data {
 class BomService;
 class CatalogRepository;
 class CatalogService;
+class QuoteLifecycle;
 }
 
 namespace manage::server {
@@ -37,6 +38,12 @@ public:
         std::shared_ptr<manage::auth::AuthService> authService,
         std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
         manage::data::BomService* bomService
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService,
+        manage::data::QuoteLifecycle* quoteLifecycle
     );
 
     quint16 listen(

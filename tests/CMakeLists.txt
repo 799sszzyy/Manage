@@ -171,6 +171,24 @@ if(TARGET Manage::Server)
     )
     manage_apply_project_options(manage_bom_routes_tests)
     add_test(NAME manage.server.bom_routes COMMAND manage_bom_routes_tests)
+
+    add_executable(manage_quote_routes_tests
+        server/quote_routes_tests.cpp
+    )
+    target_include_directories(
+        manage_quote_routes_tests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(
+        manage_quote_routes_tests
+        PRIVATE
+            Manage::Server
+            Qt6::Core
+            Qt6::Network
+    )
+    manage_apply_project_options(manage_quote_routes_tests)
+    add_test(NAME manage.server.quote_routes COMMAND manage_quote_routes_tests)
+
     add_test(NAME manage.server.smoke COMMAND manage_server --smoke-test)
     add_test(NAME manage.desktop.smoke COMMAND manage_desktop --smoke-test)
 
@@ -187,6 +205,7 @@ if(TARGET Manage::Server)
         manage.server.api
         manage.server.catalog_routes
         manage.server.bom_routes
+        manage.server.quote_routes
         manage.server.smoke
         manage.backend_e2e.self_test
         PROPERTIES
