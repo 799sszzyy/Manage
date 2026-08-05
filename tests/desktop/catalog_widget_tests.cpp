@@ -410,6 +410,12 @@ void adminCanSearchPageAndMutate(CatalogApi& api) {
             !api.lastMaterialPatch.value(QStringLiteral("isEnabled")).toBool(true),
         "enable toggle must send revision and opposite state"
     );
+    require(
+        waitUntil([&]() {
+            return child<QPushButton>(widget, "materialsRefreshButton")->isEnabled();
+        }),
+        "material refresh after enable toggle must finish"
+    );
 
     materialAdd->click();
     child<QLineEdit>(widget, "materialCodeEdit")->setText(QStringLiteral("MAT-BAD"));
