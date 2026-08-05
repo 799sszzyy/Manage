@@ -90,6 +90,21 @@ if(TARGET Manage::Data)
 endif()
 
 if(TARGET Manage::Server)
+    add_executable(manage_backend_e2e
+        e2e/backend_e2e_workflow.cpp
+    )
+    target_link_libraries(
+        manage_backend_e2e
+        PRIVATE
+            Qt6::Core
+            Qt6::Network
+    )
+    manage_apply_project_options(manage_backend_e2e)
+    add_test(
+        NAME manage.backend_e2e.self_test
+        COMMAND manage_backend_e2e --self-test
+    )
+
     add_executable(manage_server_tests
         server/api_server_tests.cpp
     )
@@ -145,6 +160,7 @@ if(TARGET Manage::Server)
         manage.server.catalog_routes
         manage.server.bom_routes
         manage.server.smoke
+        manage.backend_e2e.self_test
         PROPERTIES
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
