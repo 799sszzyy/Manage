@@ -11,6 +11,7 @@
 
 namespace manage::auth {
 class AuthService;
+class UserManagementService;
 }
 
 namespace manage::data {
@@ -44,6 +45,13 @@ public:
         std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
         manage::data::BomService* bomService,
         manage::data::QuoteLifecycle* quoteLifecycle
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService,
+        manage::data::QuoteLifecycle* quoteLifecycle,
+        std::shared_ptr<manage::auth::UserManagementService> userManagementService
     );
 
     quint16 listen(
