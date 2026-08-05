@@ -5,6 +5,7 @@
 #include "manage/data/database_connection.h"
 #include "manage/data/migration_runner.h"
 #include "manage/data/mysql_bom_repository.h"
+#include "manage/data/mysql_quote_lifecycle.h"
 #include "manage/data/mysql_user_repository.h"
 #include "manage/server/api_server.h"
 
@@ -65,6 +66,7 @@ int main(int argc, char* argv[]) {
     std::shared_ptr<manage::data::CatalogRepository> catalogRepository;
     std::unique_ptr<manage::data::MySqlBomRepository> bomRepository;
     std::unique_ptr<manage::data::BomService> bomService;
+    std::unique_ptr<manage::data::MySqlQuoteLifecycle> quoteLifecycle;
     if (!parser.isSet(smokeTestOption)) {
         databaseConnection = std::make_unique<manage::data::DatabaseConnection>(
             manage::data::DatabaseConfig::fromEnvironment()
@@ -108,12 +110,16 @@ int main(int argc, char* argv[]) {
             databaseConnection->database()
         );
         bomService = std::make_unique<manage::data::BomService>(*bomRepository);
+        quoteLifecycle = std::make_unique<manage::data::MySqlQuoteLifecycle>(
+            databaseConnection->database()
+        );
     }
 
     manage::server::ApiServer server(
         std::move(authService),
         std::move(catalogRepository),
-        bomService.get()
+        bomService.get(),
+        quoteLifecycle.get()
     );
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)
