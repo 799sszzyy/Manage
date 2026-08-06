@@ -42,6 +42,72 @@ public:
         RepositoryError* error
     ) = 0;
 
+    // 物料供应商分支
+    virtual bool listMaterialSuppliers(
+        std::int64_t materialId,
+        const PageQuery& query,
+        Page<MaterialSupplier>* page,
+        RepositoryError* error
+    ) = 0;
+    virtual bool findMaterialSupplier(
+        std::int64_t id,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) = 0;
+    virtual bool createMaterialSupplier(
+        std::int64_t materialId,
+        const MaterialSupplierDraft& draft,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) = 0;
+    virtual bool updateMaterialSupplier(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        const MaterialSupplierDraft& draft,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) = 0;
+    virtual bool setMaterialSupplierEnabled(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        bool enabled,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) = 0;
+
+    // 供应商价格分支（电线类按铜价区分）
+    virtual bool listMaterialPrices(
+        std::int64_t supplierId,
+        const PageQuery& query,
+        Page<MaterialPrice>* page,
+        RepositoryError* error
+    ) = 0;
+    virtual bool findMaterialPrice(
+        std::int64_t id,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) = 0;
+    virtual bool createMaterialPrice(
+        std::int64_t supplierId,
+        const MaterialPriceDraft& draft,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) = 0;
+    virtual bool updateMaterialPrice(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        const MaterialPriceDraft& draft,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) = 0;
+    virtual bool setMaterialPriceEnabled(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        bool enabled,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) = 0;
+
     virtual bool listCustomers(
         const PageQuery& query,
         Page<Customer>* page,
@@ -97,6 +163,70 @@ public:
         std::uint32_t expectedRevision,
         bool enabled,
         Material* material,
+        RepositoryError* error
+    ) override;
+
+    bool listMaterialSuppliers(
+        std::int64_t materialId,
+        const PageQuery& query,
+        Page<MaterialSupplier>* page,
+        RepositoryError* error
+    ) override;
+    bool findMaterialSupplier(
+        std::int64_t id,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) override;
+    bool createMaterialSupplier(
+        std::int64_t materialId,
+        const MaterialSupplierDraft& draft,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) override;
+    bool updateMaterialSupplier(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        const MaterialSupplierDraft& draft,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) override;
+    bool setMaterialSupplierEnabled(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        bool enabled,
+        MaterialSupplier* supplier,
+        RepositoryError* error
+    ) override;
+
+    bool listMaterialPrices(
+        std::int64_t supplierId,
+        const PageQuery& query,
+        Page<MaterialPrice>* page,
+        RepositoryError* error
+    ) override;
+    bool findMaterialPrice(
+        std::int64_t id,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) override;
+    bool createMaterialPrice(
+        std::int64_t supplierId,
+        const MaterialPriceDraft& draft,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) override;
+    bool updateMaterialPrice(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        const MaterialPriceDraft& draft,
+        MaterialPrice* price,
+        RepositoryError* error
+    ) override;
+    bool setMaterialPriceEnabled(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        bool enabled,
+        MaterialPrice* price,
         RepositoryError* error
     ) override;
 

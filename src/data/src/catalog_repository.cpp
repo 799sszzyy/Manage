@@ -10,10 +10,16 @@ namespace manage::data {
 namespace {
 
 constexpr auto kMaterialColumns =
-    "id, code, name, specification, unit, category, "
+    "id, code, name, specification, unit, category, is_copper_based, "
     "current_unit_price_cents, is_enabled, revision, created_at, updated_at";
 constexpr auto kCustomerColumns =
     "id, name, contact_name, phone, address, notes, revision, created_at, updated_at";
+constexpr auto kMaterialSupplierColumns =
+    "id, material_id, supplier_name, contact_name, phone, is_default, "
+    "is_enabled, revision, created_at, updated_at";
+constexpr auto kMaterialPriceColumns =
+    "id, material_supplier_id, copper_price_cents, unit_price_cents, is_default, "
+    "is_enabled, revision, created_at, updated_at";
 
 Material readMaterial(const QSqlQuery& query) {
     Material material;
@@ -23,12 +29,44 @@ Material readMaterial(const QSqlQuery& query) {
     material.specification = query.value(3).toString();
     material.unit = query.value(4).toString();
     material.category = query.value(5).toString();
-    material.currentUnitPriceCents = query.value(6).toLongLong();
-    material.isEnabled = query.value(7).toBool();
-    material.revision = query.value(8).toUInt();
-    material.createdAt = query.value(9).toDateTime();
-    material.updatedAt = query.value(10).toDateTime();
+    material.isCopperBased = query.value(6).toBool();
+    material.currentUnitPriceCents = query.value(7).toLongLong();
+    material.isEnabled = query.value(8).toBool();
+    material.revision = query.value(9).toUInt();
+    material.createdAt = query.value(10).toDateTime();
+    material.updatedAt = query.value(11).toDateTime();
     return material;
+}
+
+MaterialSupplier readMaterialSupplier(const QSqlQuery& query) {
+    MaterialSupplier supplier;
+    supplier.id = query.value(0).toLongLong();
+    supplier.materialId = query.value(1).toLongLong();
+    supplier.supplierName = query.value(2).toString();
+    supplier.contactName = query.value(3).toString();
+    supplier.phone = query.value(4).toString();
+    supplier.isDefault = query.value(5).toBool();
+    supplier.isEnabled = query.value(6).toBool();
+    supplier.revision = query.value(7).toUInt();
+    supplier.createdAt = query.value(8).toDateTime();
+    supplier.updatedAt = query.value(9).toDateTime();
+    return supplier;
+}
+
+MaterialPrice readMaterialPrice(const QSqlQuery& query) {
+    MaterialPrice price;
+    price.id = query.value(0).toLongLong();
+    price.supplierId = query.value(1).toLongLong();
+    if (!query.value(2).isNull()) {
+        price.copperPriceCents = query.value(2).toLongLong();
+    }
+    price.unitPriceCents = query.value(3).toLongLong();
+    price.isDefault = query.value(4).toBool();
+    price.isEnabled = query.value(5).toBool();
+    price.revision = query.value(6).toUInt();
+    price.createdAt = query.value(7).toDateTime();
+    price.updatedAt = query.value(8).toDateTime();
+    return price;
 }
 
 Customer readCustomer(const QSqlQuery& query) {
@@ -64,10 +102,36 @@ void bindMaterialDraft(QSqlQuery* query, const MaterialDraft& draft) {
     );
     query->bindValue(QStringLiteral(":unit"), sqlString(draft.unit));
     query->bindValue(QStringLiteral(":category"), sqlString(draft.category));
+    query->bindValue(QStringLiteral(":isCopperBased"), draft.isCopperBased);
     query->bindValue(
         QStringLiteral(":currentUnitPriceCents"),
         QVariant::fromValue<qlonglong>(draft.currentUnitPriceCents)
     );
+    query->bindValue(QStringLiteral(":isEnabled"), draft.isEnabled);
+}
+
+void bindMaterialSupplierDraft(QSqlQuery* query, const MaterialSupplierDraft& draft) {
+    query->bindValue(QStringLiteral(":supplierName"), sqlString(draft.supplierName));
+    query->bindValue(QStringLiteral(":contactName"), sqlString(draft.contactName));
+    query->bindValue(QStringLiteral(":phone"), sqlString(draft.phone));
+    query->bindValue(QStringLiteral(":isDefault"), draft.isDefault);
+    query->bindValue(QStringLiteral(":isEnabled"), draft.isEnabled);
+}
+
+void bindMaterialPriceDraft(QSqlQuery* query, const MaterialPriceDraft& draft) {
+    if (draft.copperPriceCents.has_value()) {
+        query->bindValue(
+            QStringLiteral(":copperPriceCents"),
+            QVariant::fromValue<qlonglong>(*draft.copperPriceCents)
+        );
+    } else {
+        query->bindValue(QStringLiteral(":copperPriceCents"), QVariant(QVariant::LongLong));
+    }
+    query->bindValue(
+        QStringLiteral(":unitPriceCents"),
+        QVariant::fromValue<qlonglong>(draft.unitPriceCents)
+    );
+    query->bindValue(QStringLiteral(":isDefault"), draft.isDefault);
     query->bindValue(QStringLiteral(":isEnabled"), draft.isEnabled);
 }
 
@@ -218,8 +282,9 @@ bool MySqlCatalogRepository::createMaterial(
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "INSERT INTO materials "
-        "(code, name, specification, unit, category, current_unit_price_cents, is_enabled) "
-        "VALUES (:code, :name, :specification, :unit, :category, "
+        "(code, name, specification, unit, category, is_copper_based, "
+        "current_unit_price_cents, is_enabled) "
+        "VALUES (:code, :name, :specification, :unit, :category, :isCopperBased, "
         ":currentUnitPriceCents, :isEnabled)"
     ));
     bindMaterialDraft(&query, draft);
@@ -242,6 +307,7 @@ bool MySqlCatalogRepository::updateMaterial(
     query.prepare(QStringLiteral(
         "UPDATE materials SET code = :code, name = :name, "
         "specification = :specification, unit = :unit, category = :category, "
+        "is_copper_based = :isCopperBased, "
         "current_unit_price_cents = :currentUnitPriceCents, "
         "is_enabled = :isEnabled, revision = revision + 1 "
         "WHERE id = :id AND revision = :revision"
@@ -438,6 +504,407 @@ bool MySqlCatalogRepository::updateCustomer(
         return false;
     }
     return findCustomer(id, customer, error);
+}
+
+bool MySqlCatalogRepository::listMaterialSuppliers(
+    std::int64_t materialId,
+    const PageQuery& request,
+    Page<MaterialSupplier>* page,
+    RepositoryError* error
+) {
+    clearError(error);
+    const auto where = request.search.isEmpty()
+                           ? QStringLiteral(" WHERE material_id = :materialId")
+                           : QStringLiteral(
+                                 " WHERE material_id = :materialId AND "
+                                 "(LOCATE(:searchName, supplier_name) > 0 OR "
+                                 "LOCATE(:searchContact, contact_name) > 0)"
+                             );
+    const auto bindSearch = [&](QSqlQuery* query) {
+        query->bindValue(
+            QStringLiteral(":materialId"),
+            QVariant::fromValue<qlonglong>(materialId)
+        );
+        if (!request.search.isEmpty()) {
+            query->bindValue(QStringLiteral(":searchName"), request.search);
+            query->bindValue(QStringLiteral(":searchContact"), request.search);
+        }
+    };
+
+    QSqlQuery countQuery(database_);
+    countQuery.prepare(
+        QStringLiteral("SELECT COUNT(*) FROM material_suppliers%1").arg(where)
+    );
+    bindSearch(&countQuery);
+    if (!countQuery.exec() || !countQuery.next()) {
+        setError(error, RepositoryErrorCode::Database, countQuery.lastError().text());
+        return false;
+    }
+
+    page->items.clear();
+    page->total = countQuery.value(0).toLongLong();
+    page->page = request.page;
+    page->pageSize = request.pageSize;
+    const auto offset =
+        (static_cast<qint64>(request.page) - 1) * request.pageSize;
+
+    QSqlQuery itemsQuery(database_);
+    itemsQuery.prepare(
+        QStringLiteral(
+            "SELECT %1 FROM material_suppliers%2 "
+            "ORDER BY is_default DESC, id ASC LIMIT %3 OFFSET %4"
+        )
+            .arg(QString::fromLatin1(kMaterialSupplierColumns), where)
+            .arg(request.pageSize)
+            .arg(offset)
+    );
+    bindSearch(&itemsQuery);
+    if (!itemsQuery.exec()) {
+        setError(error, RepositoryErrorCode::Database, itemsQuery.lastError().text());
+        return false;
+    }
+    while (itemsQuery.next()) {
+        page->items.push_back(readMaterialSupplier(itemsQuery));
+    }
+    return true;
+}
+
+bool MySqlCatalogRepository::findMaterialSupplier(
+    std::int64_t id,
+    MaterialSupplier* supplier,
+    RepositoryError* error
+) {
+    clearError(error);
+    QSqlQuery query(database_);
+    query.prepare(
+        QStringLiteral("SELECT %1 FROM material_suppliers WHERE id = :id")
+            .arg(QString::fromLatin1(kMaterialSupplierColumns))
+    );
+    query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(id));
+    if (!query.exec()) {
+        setError(error, RepositoryErrorCode::Database, query.lastError().text());
+        return false;
+    }
+    if (!query.next()) {
+        setError(error, RepositoryErrorCode::NotFound, QStringLiteral("material supplier not found"));
+        return false;
+    }
+    *supplier = readMaterialSupplier(query);
+    return true;
+}
+
+bool MySqlCatalogRepository::createMaterialSupplier(
+    std::int64_t materialId,
+    const MaterialSupplierDraft& draft,
+    MaterialSupplier* supplier,
+    RepositoryError* error
+) {
+    clearError(error);
+    bool materialExists = false;
+    if (!recordExists(QStringLiteral("materials"), materialId, &materialExists, error)) {
+        return false;
+    }
+    if (!materialExists) {
+        setError(
+            error,
+            RepositoryErrorCode::NotFound,
+            QStringLiteral("material not found")
+        );
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO material_suppliers "
+        "(material_id, supplier_name, contact_name, phone, is_default, is_enabled) "
+        "VALUES (:materialId, :supplierName, :contactName, :phone, :isDefault, :isEnabled)"
+    ));
+    query.bindValue(
+        QStringLiteral(":materialId"),
+        QVariant::fromValue<qlonglong>(materialId)
+    );
+    bindMaterialSupplierDraft(&query, draft);
+    if (!query.exec()) {
+        setError(error, sqlErrorCode(query.lastError()), query.lastError().text());
+        return false;
+    }
+    return findMaterialSupplier(query.lastInsertId().toLongLong(), supplier, error);
+}
+
+bool MySqlCatalogRepository::updateMaterialSupplier(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    const MaterialSupplierDraft& draft,
+    MaterialSupplier* supplier,
+    RepositoryError* error
+) {
+    clearError(error);
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "UPDATE material_suppliers SET supplier_name = :supplierName, "
+        "contact_name = :contactName, phone = :phone, is_default = :isDefault, "
+        "is_enabled = :isEnabled, revision = revision + 1 "
+        "WHERE id = :id AND revision = :revision"
+    ));
+    bindMaterialSupplierDraft(&query, draft);
+    query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(id));
+    query.bindValue(QStringLiteral(":revision"), expectedRevision);
+    if (!query.exec()) {
+        setError(error, sqlErrorCode(query.lastError()), query.lastError().text());
+        return false;
+    }
+    if (query.numRowsAffected() == 0) {
+        bool exists = false;
+        if (!recordExists(QStringLiteral("material_suppliers"), id, &exists, error)) {
+            return false;
+        }
+        setError(
+            error,
+            exists ? RepositoryErrorCode::RevisionConflict
+                   : RepositoryErrorCode::NotFound,
+            exists ? QStringLiteral("material supplier revision conflict")
+                   : QStringLiteral("material supplier not found")
+        );
+        return false;
+    }
+    return findMaterialSupplier(id, supplier, error);
+}
+
+bool MySqlCatalogRepository::setMaterialSupplierEnabled(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    bool enabled,
+    MaterialSupplier* supplier,
+    RepositoryError* error
+) {
+    clearError(error);
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "UPDATE material_suppliers SET is_enabled = :enabled, "
+        "revision = revision + 1 WHERE id = :id AND revision = :revision"
+    ));
+    query.bindValue(QStringLiteral(":enabled"), enabled);
+    query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(id));
+    query.bindValue(QStringLiteral(":revision"), expectedRevision);
+    if (!query.exec()) {
+        setError(error, RepositoryErrorCode::Database, query.lastError().text());
+        return false;
+    }
+    if (query.numRowsAffected() == 0) {
+        bool exists = false;
+        if (!recordExists(QStringLiteral("material_suppliers"), id, &exists, error)) {
+            return false;
+        }
+        setError(
+            error,
+            exists ? RepositoryErrorCode::RevisionConflict
+                   : RepositoryErrorCode::NotFound,
+            exists ? QStringLiteral("material supplier revision conflict")
+                   : QStringLiteral("material supplier not found")
+        );
+        return false;
+    }
+    return findMaterialSupplier(id, supplier, error);
+}
+
+bool MySqlCatalogRepository::listMaterialPrices(
+    std::int64_t supplierId,
+    const PageQuery& request,
+    Page<MaterialPrice>* page,
+    RepositoryError* error
+) {
+    clearError(error);
+    const auto where = QStringLiteral(" WHERE material_supplier_id = :supplierId");
+    const auto bindSearch = [&](QSqlQuery* query) {
+        query->bindValue(
+            QStringLiteral(":supplierId"),
+            QVariant::fromValue<qlonglong>(supplierId)
+        );
+    };
+
+    QSqlQuery countQuery(database_);
+    countQuery.prepare(
+        QStringLiteral("SELECT COUNT(*) FROM material_supplier_prices%1").arg(where)
+    );
+    bindSearch(&countQuery);
+    if (!countQuery.exec() || !countQuery.next()) {
+        setError(error, RepositoryErrorCode::Database, countQuery.lastError().text());
+        return false;
+    }
+
+    page->items.clear();
+    page->total = countQuery.value(0).toLongLong();
+    page->page = request.page;
+    page->pageSize = request.pageSize;
+    const auto offset =
+        (static_cast<qint64>(request.page) - 1) * request.pageSize;
+
+    QSqlQuery itemsQuery(database_);
+    itemsQuery.prepare(
+        QStringLiteral(
+            "SELECT %1 FROM material_supplier_prices%2 "
+            "ORDER BY copper_price_cents IS NOT NULL DESC, "
+            "copper_price_cents ASC, is_default DESC, id ASC LIMIT %3 OFFSET %4"
+        )
+            .arg(QString::fromLatin1(kMaterialPriceColumns), where)
+            .arg(request.pageSize)
+            .arg(offset)
+    );
+    bindSearch(&itemsQuery);
+    if (!itemsQuery.exec()) {
+        setError(error, RepositoryErrorCode::Database, itemsQuery.lastError().text());
+        return false;
+    }
+    while (itemsQuery.next()) {
+        page->items.push_back(readMaterialPrice(itemsQuery));
+    }
+    return true;
+}
+
+bool MySqlCatalogRepository::findMaterialPrice(
+    std::int64_t id,
+    MaterialPrice* price,
+    RepositoryError* error
+) {
+    clearError(error);
+    QSqlQuery query(database_);
+    query.prepare(
+        QStringLiteral("SELECT %1 FROM material_supplier_prices WHERE id = :id")
+            .arg(QString::fromLatin1(kMaterialPriceColumns))
+    );
+    query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(id));
+    if (!query.exec()) {
+        setError(error, RepositoryErrorCode::Database, query.lastError().text());
+        return false;
+    }
+    if (!query.next()) {
+        setError(error, RepositoryErrorCode::NotFound, QStringLiteral("material price not found"));
+        return false;
+    }
+    *price = readMaterialPrice(query);
+    return true;
+}
+
+bool MySqlCatalogRepository::createMaterialPrice(
+    std::int64_t supplierId,
+    const MaterialPriceDraft& draft,
+    MaterialPrice* price,
+    RepositoryError* error
+) {
+    clearError(error);
+    bool supplierExists = false;
+    if (!recordExists(
+            QStringLiteral("material_suppliers"),
+            supplierId,
+            &supplierExists,
+            error
+        )) {
+        return false;
+    }
+    if (!supplierExists) {
+        setError(
+            error,
+            RepositoryErrorCode::NotFound,
+            QStringLiteral("material supplier not found")
+        );
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO material_supplier_prices "
+        "(material_supplier_id, copper_price_cents, unit_price_cents, "
+        "is_default, is_enabled) "
+        "VALUES (:supplierId, :copperPriceCents, :unitPriceCents, "
+        ":isDefault, :isEnabled)"
+    ));
+    query.bindValue(
+        QStringLiteral(":supplierId"),
+        QVariant::fromValue<qlonglong>(supplierId)
+    );
+    bindMaterialPriceDraft(&query, draft);
+    if (!query.exec()) {
+        setError(error, sqlErrorCode(query.lastError()), query.lastError().text());
+        return false;
+    }
+    return findMaterialPrice(query.lastInsertId().toLongLong(), price, error);
+}
+
+bool MySqlCatalogRepository::updateMaterialPrice(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    const MaterialPriceDraft& draft,
+    MaterialPrice* price,
+    RepositoryError* error
+) {
+    clearError(error);
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "UPDATE material_supplier_prices SET "
+        "copper_price_cents = :copperPriceCents, "
+        "unit_price_cents = :unitPriceCents, is_default = :isDefault, "
+        "is_enabled = :isEnabled, revision = revision + 1 "
+        "WHERE id = :id AND revision = :revision"
+    ));
+    bindMaterialPriceDraft(&query, draft);
+    query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(id));
+    query.bindValue(QStringLiteral(":revision"), expectedRevision);
+    if (!query.exec()) {
+        setError(error, sqlErrorCode(query.lastError()), query.lastError().text());
+        return false;
+    }
+    if (query.numRowsAffected() == 0) {
+        bool exists = false;
+        if (!recordExists(QStringLiteral("material_supplier_prices"), id, &exists, error)) {
+            return false;
+        }
+        setError(
+            error,
+            exists ? RepositoryErrorCode::RevisionConflict
+                   : RepositoryErrorCode::NotFound,
+            exists ? QStringLiteral("material price revision conflict")
+                   : QStringLiteral("material price not found")
+        );
+        return false;
+    }
+    return findMaterialPrice(id, price, error);
+}
+
+bool MySqlCatalogRepository::setMaterialPriceEnabled(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    bool enabled,
+    MaterialPrice* price,
+    RepositoryError* error
+) {
+    clearError(error);
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "UPDATE material_supplier_prices SET is_enabled = :enabled, "
+        "revision = revision + 1 WHERE id = :id AND revision = :revision"
+    ));
+    query.bindValue(QStringLiteral(":enabled"), enabled);
+    query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(id));
+    query.bindValue(QStringLiteral(":revision"), expectedRevision);
+    if (!query.exec()) {
+        setError(error, RepositoryErrorCode::Database, query.lastError().text());
+        return false;
+    }
+    if (query.numRowsAffected() == 0) {
+        bool exists = false;
+        if (!recordExists(QStringLiteral("material_supplier_prices"), id, &exists, error)) {
+            return false;
+        }
+        setError(
+            error,
+            exists ? RepositoryErrorCode::RevisionConflict
+                   : RepositoryErrorCode::NotFound,
+            exists ? QStringLiteral("material price revision conflict")
+                   : QStringLiteral("material price not found")
+        );
+        return false;
+    }
+    return findMaterialPrice(id, price, error);
 }
 
 } // namespace manage::data

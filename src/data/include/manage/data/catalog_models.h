@@ -31,6 +31,7 @@ struct Material final {
     QString specification;
     QString unit;
     QString category;
+    bool isCopperBased{false};
     std::int64_t currentUnitPriceCents{};
     bool isEnabled{true};
     std::uint32_t revision{1};
@@ -44,7 +45,50 @@ struct MaterialDraft final {
     QString specification;
     QString unit;
     QString category;
+    bool isCopperBased{false};
     std::int64_t currentUnitPriceCents{};
+    bool isEnabled{true};
+};
+
+// 物料下的供应商分支：同一编号物料可对应多个供应商。
+struct MaterialSupplier final {
+    std::int64_t id{};
+    std::int64_t materialId{};
+    QString supplierName;
+    QString contactName;
+    QString phone;
+    bool isDefault{false};
+    bool isEnabled{true};
+    std::uint32_t revision{1};
+    QDateTime createdAt;
+    QDateTime updatedAt;
+};
+
+struct MaterialSupplierDraft final {
+    QString supplierName;
+    QString contactName;
+    QString phone;
+    bool isDefault{false};
+    bool isEnabled{true};
+};
+
+// 供应商下的价格分支：电线类物料按铜价区分，普通物料铜价为 null。
+struct MaterialPrice final {
+    std::int64_t id{};
+    std::int64_t supplierId{};
+    std::optional<std::int64_t> copperPriceCents;
+    std::int64_t unitPriceCents{};
+    bool isDefault{false};
+    bool isEnabled{true};
+    std::uint32_t revision{1};
+    QDateTime createdAt;
+    QDateTime updatedAt;
+};
+
+struct MaterialPriceDraft final {
+    std::optional<std::int64_t> copperPriceCents;
+    std::int64_t unitPriceCents{};
+    bool isDefault{false};
     bool isEnabled{true};
 };
 
