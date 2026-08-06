@@ -4,6 +4,7 @@ add_library(manage_desktop_lib STATIC
     include/manage/desktop/bom_quote_widget.h
     include/manage/desktop/catalog_widget.h
     include/manage/desktop/excel_tools_widget.h
+    include/manage/desktop/process_step_widget.h
     include/manage/desktop/quote_management_widget.h
     include/manage/desktop/user_management_widget.h
     include/manage/desktop/statistics_widget.h
@@ -12,6 +13,7 @@ add_library(manage_desktop_lib STATIC
     src/bom_quote_widget.cpp
     src/catalog_widget.cpp
     src/excel_tools_widget.cpp
+    src/process_step_widget.cpp
     src/quote_management_widget.cpp
     src/user_management_widget.cpp
     src/statistics_widget.cpp

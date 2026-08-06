@@ -10,6 +10,7 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSpinBox;
 class QTableWidget;
 class QTextEdit;
 
@@ -44,6 +45,9 @@ private:
     void loadCustomers();
     void loadBoms();
     void loadMaterials();
+    void loadProcessSteps();
+    void addProcessStep();
+    void removeProcessStep();
     void loadSelectedBom(bool forceReload = false);
     void loadNextBomMaterial();
     void addMaterialRow(const QJsonObject& material, qint64 quantityMicros, const QString& notes);
@@ -104,6 +108,15 @@ private:
     QComboBox* customerCombo_{};
     QComboBox* bomCombo_{};
     QDoubleSpinBox* bomQuantitySpin_{};
+    QLabel* bomLeadDaysLabel_{};
+    QSpinBox* laborCountSpin_{};
+    QLabel* processTotalLabel_{};
+    QLabel* estimatedDeliveryLabel_{};
+    QComboBox* processCombo_{};
+    QPushButton* addProcessButton_{};
+    QPushButton* removeProcessButton_{};
+    QTableWidget* processTable_{};
+    QJsonArray processLibrary_;
     QLineEdit* materialSearchEdit_{};
     QPushButton* materialSearchButton_{};
     QComboBox* materialCombo_{};

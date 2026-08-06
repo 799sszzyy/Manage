@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextEdit>
@@ -221,6 +222,13 @@ void QuoteManagementWidget::buildUi() {
     form->addRow(QStringLiteral("客户"), customerCombo_);
     form->addRow(QStringLiteral("关联 BOM（报价基础）"), bomCombo_);
     form->addRow(QStringLiteral("BOM 销售数量"), bomQuantitySpin_);
+    bomLeadDaysLabel_ = named(new QLabel(QStringLiteral("-"), editorGroup_), "quoteBomLeadDaysLabel");
+    form->addRow(QStringLiteral("BOM 交期（最长物料）"), bomLeadDaysLabel_);
+    laborCountSpin_ = named(new QSpinBox(editorGroup_), "quoteLaborCountSpin");
+    laborCountSpin_->setRange(1, 9999);
+    laborCountSpin_->setValue(1);
+    laborCountSpin_->setSuffix(QStringLiteral(" 人"));
+    form->addRow(QStringLiteral("产品劳动人数"), laborCountSpin_);
     editor->addLayout(form);
 
     auto* itemActions = new QHBoxLayout;
@@ -246,6 +254,27 @@ void QuoteManagementWidget::buildUi() {
     itemsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     itemsTable_->horizontalHeader()->setStretchLastSection(true);
     editor->addWidget(itemsTable_, 1);
+
+    auto* processActions = new QHBoxLayout;
+    processCombo_ = named(new QComboBox(editorGroup_), "quoteProcessCombo");
+    processCombo_->addItem(QStringLiteral("从工序库选择…"), qint64{});
+    addProcessButton_ = named(new QPushButton(QStringLiteral("添加工序"), editorGroup_), "quoteAddProcessButton");
+    removeProcessButton_ = named(new QPushButton(QStringLiteral("移除选中工序"), editorGroup_), "quoteRemoveProcessButton");
+    processActions->addWidget(processCombo_, 1);
+    processActions->addWidget(addProcessButton_);
+    processActions->addWidget(removeProcessButton_);
+    editor->addLayout(processActions);
+
+    processTable_ = named(new QTableWidget(0, 3, editorGroup_), "quoteProcessTable");
+    processTable_->setHorizontalHeaderLabels({
+        QStringLiteral("行号"), QStringLiteral("工序名称"), QStringLiteral("工时（单人分钟）"),
+    });
+    processTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    processTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    processTable_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    processTable_->horizontalHeader()->setStretchLastSection(true);
+    processTable_->setMaximumHeight(150);
+    editor->addWidget(processTable_);
 
     auto* totals = new QFormLayout;
     auto moneySpin = [this](const char* name) {
@@ -273,6 +302,10 @@ void QuoteManagementWidget::buildUi() {
     totals->addRow(QStringLiteral("其他费用"), otherFeesSpin_);
     totals->addRow(QStringLiteral("加价率"), markupSpin_);
     totals->addRow(QStringLiteral("税率"), taxSpin_);
+    processTotalLabel_ = named(new QLabel(QStringLiteral("-"), editorGroup_), "quoteProcessTotalLabel");
+    estimatedDeliveryLabel_ = named(new QLabel(QStringLiteral("-"), editorGroup_), "quoteEstimatedDeliveryLabel");
+    totals->addRow(QStringLiteral("工序总工时（单人分钟）"), processTotalLabel_);
+    totals->addRow(QStringLiteral("预计发货交期（天）"), estimatedDeliveryLabel_);
     totals->addRow(QStringLiteral("备注"), notesEdit_);
     totals->addRow(QStringLiteral("物料成本（服务端）"), materialCostLabel_);
     totals->addRow(QStringLiteral("税前金额（服务端）"), beforeTaxLabel_);
@@ -319,6 +352,35 @@ void QuoteManagementWidget::connectUi() {
         loadSelectedBom(true);
     });
     connect(removeItemButton_, &QPushButton::clicked, this, &QuoteManagementWidget::removeItem);
+    connect(processCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+                const auto id = processCombo_->currentData(kIdRole).toLongLong();
+                addProcessButton_->setEnabled(
+                    canWrite() && editing_ && !busy_ && !loadingBom_ && id > 0
+                );
+            });
+    connect(addProcessButton_, &QPushButton::clicked, this, &QuoteManagementWidget::addProcessStep);
+    connect(removeProcessButton_, &QPushButton::clicked, this, &QuoteManagementWidget::removeProcessStep);
+    const auto refreshEstimate = [this]() {
+        qint64 totalMinutes = 0;
+        for (int row = 0; row < processTable_->rowCount(); ++row) {
+            if (auto* item = processTable_->item(row, 2)) {
+                totalMinutes += item->text().toLongLong();
+            }
+        }
+        processTotalLabel_->setText(QString::number(totalMinutes));
+        const auto bomLeadDays = bomLeadDaysLabel_->text().toInt();
+        const auto labor = qMax(1, laborCountSpin_->value());
+        const auto workdayMinutes = 480LL;
+        const auto laborDays = totalMinutes <= 0
+            ? 0
+            : (totalMinutes + labor * workdayMinutes - 1) / (labor * workdayMinutes);
+        estimatedDeliveryLabel_->setText(QString::number(bomLeadDays + laborDays));
+    };
+    connect(processTable_, &QTableWidget::itemChanged, this,
+            [refreshEstimate](QTableWidgetItem*) { refreshEstimate(); });
+    connect(laborCountSpin_, qOverload<int>(&QSpinBox::valueChanged), this,
+            [refreshEstimate](int) { refreshEstimate(); });
     connect(saveButton_, &QPushButton::clicked, this, &QuoteManagementWidget::saveQuote);
     connect(cancelButton_, &QPushButton::clicked, this, [this] { editing_ = false; updateControls(); });
 }
@@ -381,17 +443,31 @@ void QuoteManagementWidget::updateControls() {
     const auto editable = write && editing_ && currentStatus_ == QStringLiteral("draft") &&
                           !busy_ && !loadingBom_;
     const QList<QWidget*> editorFields{
-        customerCombo_, bomCombo_, bomQuantitySpin_, materialSearchEdit_, materialSearchButton_, materialCombo_, addItemButton_, removeItemButton_,
+        customerCombo_, bomCombo_, bomQuantitySpin_, laborCountSpin_, materialSearchEdit_, materialSearchButton_, materialCombo_, addItemButton_, removeItemButton_,
+        processCombo_, addProcessButton_, removeProcessButton_,
         freightSpin_, otherFeesSpin_, markupSpin_, taxSpin_, notesEdit_,
     };
     for (auto* field : editorFields) {
         field->setEnabled(editable);
+    }
+    if (processCombo_->currentData(kIdRole).toLongLong() <= 0) {
+        addProcessButton_->setEnabled(false);
     }
     saveButton_->setEnabled(editable);
     cancelButton_->setEnabled(editing_ && !busy_);
     for (int rowIndex = 0; rowIndex < itemsTable_->rowCount(); ++rowIndex) {
         for (int column : {3, 4, 5}) {
             auto* item = itemsTable_->item(rowIndex, column);
+            if (item) {
+                item->setFlags(editable
+                    ? Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable
+                    : Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            }
+        }
+    }
+    for (int rowIndex = 0; rowIndex < processTable_->rowCount(); ++rowIndex) {
+        for (int column : {1, 2}) {
+            auto* item = processTable_->item(rowIndex, column);
             if (item) {
                 item->setFlags(editable
                     ? Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable
@@ -489,6 +565,7 @@ void QuoteManagementWidget::loadLookups() {
     loadCustomers();
     loadBoms();
     loadMaterials();
+    loadProcessSteps();
 }
 
 void QuoteManagementWidget::loadCustomers() {
@@ -542,6 +619,65 @@ void QuoteManagementWidget::loadMaterials() {
             }
             self->updateControls();
         });
+}
+
+void QuoteManagementWidget::loadProcessSteps() {
+    if (!sessionReady()) return;
+    apiClient_->get(QStringLiteral("/api/v1/process-steps?page=1&pageSize=100&enabled=true"),
+        [self = QPointer<QuoteManagementWidget>(this)](ApiResponse response) {
+            if (!self || !response.succeeded()) return;
+            self->processLibrary_ = response.body.value(QStringLiteral("items")).toArray();
+            const QSignalBlocker blocker(self->processCombo_);
+            self->processCombo_->clear();
+            self->processCombo_->addItem(QStringLiteral("从工序库选择…"), qint64{});
+            for (const auto& value : self->processLibrary_) {
+                const auto step = value.toObject();
+                const auto index = self->processCombo_->count();
+                self->processCombo_->addItem(
+                    QStringLiteral("%1 - %2（%3 分钟/人）")
+                        .arg(step.value(QStringLiteral("code")).toString(),
+                             step.value(QStringLiteral("name")).toString())
+                        .arg(step.value(QStringLiteral("laborMinutes")).toInteger()),
+                    step.value(QStringLiteral("id")).toInteger()
+                );
+                self->processCombo_->setItemData(index, step, Qt::UserRole + 2);
+            }
+        });
+}
+
+void QuoteManagementWidget::addProcessStep() {
+    if (!canWrite() || !editing_ || busy_ || loadingBom_) return;
+    const auto id = processCombo_->currentData(kIdRole).toLongLong();
+    if (id <= 0) {
+        statusLabel_->setText(QStringLiteral("请先在工序库中选择一道工序。"));
+        return;
+    }
+    const auto step = processCombo_->currentData(Qt::UserRole + 2).toObject();
+    if (step.isEmpty()) return;
+    const auto row = processTable_->rowCount();
+    processTable_->insertRow(row);
+    processTable_->setItem(row, 0, readOnly(QString::number(row + 1)));
+    processTable_->setItem(row, 1, new QTableWidgetItem(step.value(QStringLiteral("name")).toString()));
+    processTable_->setItem(row, 2, new QTableWidgetItem(QString::number(step.value(QStringLiteral("laborMinutes")).toInteger())));
+    statusLabel_->setText(QStringLiteral("已添加工序：%1。可继续调整工时或直接修改名称。")
+        .arg(step.value(QStringLiteral("name")).toString()));
+    updateControls();
+}
+
+void QuoteManagementWidget::removeProcessStep() {
+    if (!canWrite() || !editing_ || busy_) return;
+    const auto rows = processTable_->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        statusLabel_->setText(QStringLiteral("请先选择要移除的工序行。"));
+        return;
+    }
+    processTable_->removeRow(rows.first().row());
+    for (int row = 0; row < processTable_->rowCount(); ++row) {
+        if (auto* item = processTable_->item(row, 0)) {
+            item->setText(QString::number(row + 1));
+        }
+    }
+    updateControls();
 }
 
 void QuoteManagementWidget::loadSelectedBom(bool forceReload) {
@@ -762,6 +898,16 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
             {QStringLiteral("notes"), itemsTable_->item(row, 5)->text().trimmed()},
         });
     }
+    QJsonArray processSteps;
+    for (int row = 0; row < processTable_->rowCount(); ++row) {
+        const auto stepName = processTable_->item(row, 1)->text().trimmed();
+        const auto minutes = processTable_->item(row, 2)->text().toLongLong();
+        if (stepName.isEmpty() || minutes < 0) return {};
+        processSteps.append(QJsonObject{
+            {QStringLiteral("stepName"), stepName},
+            {QStringLiteral("laborMinutes"), minutes},
+        });
+    }
     QJsonObject body{
         {QStringLiteral("customerId"), customerId},
         {QStringLiteral("freightCents"), qRound64(freightSpin_->value() * 100.0)},
@@ -771,6 +917,8 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
         {QStringLiteral("notes"), notesEdit_->toPlainText().trimmed()},
         {QStringLiteral("items"), items},
         {QStringLiteral("bomQuantityMicros"), bomQuantityMicros},
+        {QStringLiteral("laborCount"), laborCountSpin_->value()},
+        {QStringLiteral("processSteps"), processSteps},
     };
     body.insert(QStringLiteral("bomTemplateId"), bomId);
     if (includeRevision) body.insert(QStringLiteral("revision"), currentRevision_);
@@ -873,6 +1021,10 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
     loadedBomQuantityMicros_ = quote.value(QStringLiteral("bomQuantityMicros")).toInteger();
     if (loadedBomQuantityMicros_ <= 0) loadedBomQuantityMicros_ = 1'000'000;
     bomQuantitySpin_->setValue(static_cast<double>(loadedBomQuantityMicros_) / 1'000'000.0);
+    bomLeadDaysLabel_->setText(QString::number(quote.value(QStringLiteral("bomLeadDays")).toInt()));
+    laborCountSpin_->setValue(qMax(1, quote.value(QStringLiteral("laborCount")).toInt(1)));
+    processTotalLabel_->setText(QString::number(quote.value(QStringLiteral("processTotalMinutes")).toInteger()));
+    estimatedDeliveryLabel_->setText(QString::number(quote.value(QStringLiteral("estimatedDeliveryDays")).toInt()));
     freightSpin_->setValue(quote.value(QStringLiteral("freightCents")).toInteger() / 100.0);
     otherFeesSpin_->setValue(quote.value(QStringLiteral("otherFeesCents")).toInteger() / 100.0);
     markupSpin_->setValue(quote.value(QStringLiteral("markupBasisPoints")).toInteger() / 100.0);
@@ -895,6 +1047,15 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
         itemsTable_->setItem(row, 4, new QTableWidgetItem(QString::number(item.value(QStringLiteral("unitPriceCents")).toInteger() / 100.0, 'f', 2)));
         itemsTable_->setItem(row, 5, new QTableWidgetItem(item.value(QStringLiteral("notes")).toString()));
     }
+    processTable_->setRowCount(0);
+    for (const auto& value : quote.value(QStringLiteral("processSteps")).toArray()) {
+        const auto step = value.toObject();
+        const auto row = processTable_->rowCount();
+        processTable_->insertRow(row);
+        processTable_->setItem(row, 0, readOnly(QString::number(row + 1)));
+        processTable_->setItem(row, 1, new QTableWidgetItem(step.value(QStringLiteral("stepName")).toString()));
+        processTable_->setItem(row, 2, new QTableWidgetItem(QString::number(step.value(QStringLiteral("laborMinutes")).toInteger())));
+    }
     editorGroup_->setTitle(QStringLiteral("报价详情"));
     updateControls();
 }
@@ -915,12 +1076,17 @@ void QuoteManagementWidget::clearEditor() {
         if (bomCombo_->count()) bomCombo_->setCurrentIndex(0);
     }
     bomQuantitySpin_->setValue(1.0);
+    bomLeadDaysLabel_->setText(QStringLiteral("-"));
+    laborCountSpin_->setValue(1);
+    processTotalLabel_->setText(QStringLiteral("-"));
+    estimatedDeliveryLabel_->setText(QStringLiteral("-"));
     pendingBom_ = {};
     pendingBomItems_ = {};
     pendingBomMaterials_ = {};
     pendingBomIndex_ = 0;
     loadingBom_ = false;
     itemsTable_->setRowCount(0);
+    processTable_->setRowCount(0);
     freightSpin_->setValue(0);
     otherFeesSpin_->setValue(0);
     markupSpin_->setValue(0);

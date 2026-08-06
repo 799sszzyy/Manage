@@ -2,6 +2,7 @@
 #include "manage/desktop/catalog_widget.h"
 #include "manage/desktop/excel_tools_widget.h"
 #include "manage/desktop/main_window.h"
+#include "manage/desktop/process_step_widget.h"
 #include "manage/desktop/quote_management_widget.h"
 #include "manage/desktop/statistics_widget.h"
 #include "manage/desktop/user_management_widget.h"
@@ -65,6 +66,10 @@ int main(int argc, char* argv[]) {
     window.addModuleTab(
         QStringLiteral("报价管理"),
         new manage::desktop::QuoteManagementWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("工序与工时"),
+        new manage::desktop::ProcessStepWidget(window.apiClient())
     );
     window.addModuleTab(
         QStringLiteral("Excel 工具"),
