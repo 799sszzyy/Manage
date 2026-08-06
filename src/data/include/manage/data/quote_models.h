@@ -46,6 +46,9 @@ struct QuoteLineInput final {
     qint64 quantityMicros{};
     qint64 unitPriceCents{};
     QString notes;
+    // 铜价档（元/吨，可选）：电线类物料按铜价区分价格分支；
+    // 无值表示普通物料，不参与铜价档展开。
+    std::optional<qint64> copperPriceCents;
 };
 
 // 报价单上的一道工序步骤：名称快照 + 单人工时（分钟）。
@@ -87,6 +90,9 @@ struct QuoteItemSnapshot final {
     qint64 unitPriceCents{};
     qint64 subtotalCents{};
     QString notes;
+    // 铜价档快照（可选）：报价时冻结的铜价（元/吨），
+    // 供 Bshine 模板输出按铜价档展开多行；置于末尾兼容位置初始化。
+    std::optional<qint64> copperPriceCents;
 };
 
 // 报价单上已冻结的工序步骤快照。

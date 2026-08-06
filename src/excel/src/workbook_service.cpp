@@ -11,6 +11,7 @@
 #include <QVariant>
 
 #include <cmath>
+#include <algorithm>
 #include <limits>
 
 namespace manage::excel {
@@ -463,9 +464,21 @@ bool WorkbookService::exportQuote(
     const manage::data::QuoteDocument& quote,
     QString* error
 ) {
+    // 铜价档展开：任一明细行带铜价档（电线类物料）时，
+    // 在"单价"前插入"铜价（元/吨）"列；否则保持模板 8 列布局。
+    const bool hasCopperTier = std::any_of(
+        quote.items.begin(), quote.items.end(), [](const auto& item) {
+            return item.copperPriceCents.has_value();
+        }
+    );
+    const int columnCount = hasCopperTier ? 9 : 8;
+    const int priceColumn = hasCopperTier ? 8 : 7;
+    const int totalColumn = hasCopperTier ? 9 : 8;
+    const int labelColumn = hasCopperTier ? 8 : 7;
+
     Document document;
     renameFirstSheet(document, QStringLiteral("报价单"));
-    document.mergeCells(QStringLiteral("A1:H1"), titleFormat());
+    document.mergeCells(QXlsx::CellRange(1, 1, 1, columnCount), titleFormat());
     document.write(1, 1, QStringLiteral("报价单 %1").arg(quote.summary.quoteNumber), titleFormat());
     document.write(2, 1, QStringLiteral("客户"), headerFormat());
     document.write(2, 2, quote.summary.customerName);
@@ -479,11 +492,19 @@ bool WorkbookService::exportQuote(
     document.write(4, 2, quote.summary.bomLeadDays);
     document.write(4, 4, QStringLiteral("预计发货交期（天）"), headerFormat());
     document.write(4, 5, quote.summary.estimatedDeliveryDays);
-    writeHeaders(document, 5, {
-        QStringLiteral("行号"), QStringLiteral("物料编码"), QStringLiteral("物料名称"),
-        QStringLiteral("规格"), QStringLiteral("单位"), QStringLiteral("数量"),
-        QStringLiteral("单价"), QStringLiteral("小计")
-    });
+    if (hasCopperTier) {
+        writeHeaders(document, 5, {
+            QStringLiteral("行号"), QStringLiteral("物料编码"), QStringLiteral("物料名称"),
+            QStringLiteral("规格"), QStringLiteral("单位"), QStringLiteral("数量"),
+            QStringLiteral("铜价（元/吨）"), QStringLiteral("单价"), QStringLiteral("小计")
+        });
+    } else {
+        writeHeaders(document, 5, {
+            QStringLiteral("行号"), QStringLiteral("物料编码"), QStringLiteral("物料名称"),
+            QStringLiteral("规格"), QStringLiteral("单位"), QStringLiteral("数量"),
+            QStringLiteral("单价"), QStringLiteral("小计")
+        });
+    }
     int row = 6;
     for (const auto& item : quote.items) {
         document.write(row, 1, item.lineNo);
@@ -492,22 +513,29 @@ bool WorkbookService::exportQuote(
         document.write(row, 4, item.specification);
         document.write(row, 5, item.unit);
         document.write(row, 6, static_cast<double>(item.quantityMicros) / 1'000'000.0);
-        writeMoney(document, row, 7, item.unitPriceCents);
-        writeMoney(document, row, 8, item.subtotalCents);
+        if (hasCopperTier) {
+            if (item.copperPriceCents.has_value()) {
+                writeMoney(document, row, 7, *item.copperPriceCents);
+            } else {
+                document.write(row, 7, QString{});
+            }
+        }
+        writeMoney(document, row, priceColumn, item.unitPriceCents);
+        writeMoney(document, row, totalColumn, item.subtotalCents);
         ++row;
     }
     ++row;
-    document.write(row, 7, QStringLiteral("材料成本"), headerFormat());
-    writeMoney(document, row++, 8, quote.materialCostCents);
-    document.write(row, 7, QStringLiteral("运费"), headerFormat());
-    writeMoney(document, row++, 8, quote.freightCents);
-    document.write(row, 7, QStringLiteral("其他费用"), headerFormat());
-    writeMoney(document, row++, 8, quote.otherFeesCents);
-    document.write(row, 7, QStringLiteral("含税报价"), headerFormat());
-    writeMoney(document, row, 8, quote.priceWithTaxCents);
+    document.write(row, labelColumn, QStringLiteral("材料成本"), headerFormat());
+    writeMoney(document, row++, totalColumn, quote.materialCostCents);
+    document.write(row, labelColumn, QStringLiteral("运费"), headerFormat());
+    writeMoney(document, row++, totalColumn, quote.freightCents);
+    document.write(row, labelColumn, QStringLiteral("其他费用"), headerFormat());
+    writeMoney(document, row++, totalColumn, quote.otherFeesCents);
+    document.write(row, labelColumn, QStringLiteral("含税报价"), headerFormat());
+    writeMoney(document, row, totalColumn, quote.priceWithTaxCents);
     ++row;
-    document.write(row, 7, QStringLiteral("劳动人数"), headerFormat());
-    document.write(row, 8, quote.summary.laborCount);
+    document.write(row, labelColumn, QStringLiteral("劳动人数"), headerFormat());
+    document.write(row, totalColumn, quote.summary.laborCount);
 
     // 工序步骤明细：展示为独立小表，直观体现"工时总和 / 人数"的来源。
     if (!quote.processSteps.empty()) {
@@ -529,8 +557,14 @@ bool WorkbookService::exportQuote(
     document.setColumnWidth(4, 24);
     document.setColumnWidth(5, 10);
     document.setColumnWidth(6, 12);
-    document.setColumnWidth(7, 14);
-    document.setColumnWidth(8, 16);
+    if (hasCopperTier) {
+        document.setColumnWidth(7, 16);
+        document.setColumnWidth(8, 14);
+        document.setColumnWidth(9, 16);
+    } else {
+        document.setColumnWidth(7, 14);
+        document.setColumnWidth(8, 16);
+    }
     return save(document, output, error);
 }
 

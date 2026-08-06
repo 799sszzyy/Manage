@@ -169,6 +169,53 @@ void businessExportsHaveExpectedSheets() {
     require(statisticsDocument.sheetNames().size() == 4, "statistics has four sheets");
 }
 
+void quoteExportExpandsCopperTierColumn() {
+    manage::data::QuoteDocument quote;
+    quote.summary.quoteNumber = QStringLiteral("Q-COPPER-1");
+    quote.summary.customerName = QStringLiteral("海外客户");
+    quote.priceWithTaxCents = 7000;
+    // 普通物料行：无铜价档。
+    quote.items.push_back({1, 10, 1, QStringLiteral("CON-001"), QStringLiteral("排针"),
+                           QStringLiteral("2.54mm"), QStringLiteral("条"), 1'000'000,
+                           100, 100, {}});
+    // 电线类物料行：带铜价档（70000.00 元/吨 = 7'000'000 分）。
+    manage::data::QuoteItemSnapshot wire;
+    wire.id = 2;
+    wire.lineNo = 2;
+    wire.materialId = 9;
+    wire.materialCode = QStringLiteral("WIRE-01");
+    wire.materialName = QStringLiteral("铜线");
+    wire.specification = QStringLiteral("0.5mm");
+    wire.unit = QStringLiteral("米");
+    wire.quantityMicros = 2'000'000;
+    wire.unitPriceCents = 300;
+    wire.subtotalCents = 600;
+    wire.copperPriceCents = 7'000'000;
+    quote.items.push_back(std::move(wire));
+
+    QBuffer output;
+    openBuffer(output);
+    require(manage::excel::WorkbookService::exportQuote(&output, quote), "quote export with copper");
+    rewindForReading(output);
+    QXlsx::Document document(&output);
+    require(document.load(), "quote workbook opens");
+
+    // 有铜价档时，表头在"单价"前插入"铜价（元/吨）"：G5 铜价、H5 单价、I5 小计。
+    require(document.read(5, 7).toString() == QStringLiteral("铜价（元/吨）"),
+            "copper tier header inserted before unit price");
+    require(document.read(5, 8).toString() == QStringLiteral("单价"),
+            "unit price header at column 8");
+    require(document.read(5, 9).toString() == QStringLiteral("小计"),
+            "subtotal header at column 9");
+    // 普通物料行铜价留空；电线类物料行输出铜价档。
+    require(document.read(6, 7).toString().trimmed().isEmpty(),
+            "plain material leaves copper tier empty");
+    require(std::fabs(document.read(7, 7).toDouble() - 70'000.00) < 0.005,
+            "copper tier written in yuan per tonne");
+    require(std::fabs(document.read(7, 8).toDouble() - 3.00) < 0.005,
+            "wire unit price at column 8");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -178,6 +225,7 @@ int main(int argc, char* argv[]) {
         templateContainsInstructionsAndNumericPrice();
         importerReportsSpecificRows();
         businessExportsHaveExpectedSheets();
+        quoteExportExpandsCopperTierColumn();
         if (argc > 1) {
             QFile sample(QString::fromLocal8Bit(argv[1]));
             require(sample.open(QIODevice::WriteOnly), "sample output file must open");

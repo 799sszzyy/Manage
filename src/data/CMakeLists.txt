@@ -44,6 +44,7 @@ qt_add_resources(manage_data "manage_migrations"
         "${PROJECT_SOURCE_DIR}/db-migrations/006_engineer_responsibility.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/007_task_dispatch.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/008_delivery_date.sql"
+        "${PROJECT_SOURCE_DIR}/db-migrations/009_quote_copper_tier.sql"
 )
 
 manage_apply_project_options(manage_data)

@@ -257,10 +257,11 @@ void QuoteManagementWidget::buildUi() {
     itemActions->addWidget(removeItemButton_);
     editor->addLayout(itemActions);
 
-    itemsTable_ = named(new QTableWidget(0, 6, editorGroup_), "quoteSavedItemsTable");
+    itemsTable_ = named(new QTableWidget(0, 7, editorGroup_), "quoteSavedItemsTable");
     itemsTable_->setHorizontalHeaderLabels({
         QStringLiteral("物料编码"), QStringLiteral("物料名称"), QStringLiteral("规格/单位"),
-        QStringLiteral("数量"), QStringLiteral("单价（元）"), QStringLiteral("备注"),
+        QStringLiteral("数量"), QStringLiteral("单价（元）"), QStringLiteral("铜价档（元/吨）"),
+        QStringLiteral("备注"),
     });
     itemsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     itemsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -912,7 +913,9 @@ void QuoteManagementWidget::addMaterialRow(
     itemsTable_->setItem(row, 2, readOnly(QStringLiteral("%1 / %2").arg(material.value(QStringLiteral("specification")).toString(), material.value(QStringLiteral("unit")).toString())));
     itemsTable_->setItem(row, 3, new QTableWidgetItem(quantity(quantityMicros)));
     itemsTable_->setItem(row, 4, new QTableWidgetItem(QString::number(material.value(QStringLiteral("currentUnitPriceCents")).toInteger() / 100.0, 'f', 2)));
-    itemsTable_->setItem(row, 5, new QTableWidgetItem(notes));
+    // 第 5 列为铜价档（元/吨），添加行默认留空（普通物料）。
+    itemsTable_->setItem(row, 5, new QTableWidgetItem);
+    itemsTable_->setItem(row, 6, new QTableWidgetItem(notes));
 }
 
 void QuoteManagementWidget::removeItem() {
@@ -932,12 +935,24 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
         const auto priceValue = scaledDecimal(itemsTable_->item(row, 4)->text(), 2, false);
         const auto materialId = itemsTable_->item(row, 0)->data(kIdRole).toLongLong();
         if (!quantityValue || !priceValue || materialId <= 0) return {};
-        items.append(QJsonObject{
+        QJsonObject itemBody{
             {QStringLiteral("materialId"), materialId},
             {QStringLiteral("quantityMicros"), *quantityValue},
             {QStringLiteral("unitPriceCents"), *priceValue},
-            {QStringLiteral("notes"), itemsTable_->item(row, 5)->text().trimmed()},
-        });
+            {QStringLiteral("notes"), itemsTable_->item(row, 6)->text().trimmed()},
+        };
+        // 铜价档（元/吨）：留空表示普通物料，传 null；填写则解析为分。
+        const auto copperText = itemsTable_->item(row, 5)->text().trimmed();
+        if (copperText.isEmpty()) {
+            itemBody.insert(
+                QStringLiteral("copperPriceCents"), QJsonValue(QJsonValue::Null)
+            );
+        } else {
+            const auto copperValue = scaledDecimal(copperText, 2, false);
+            if (!copperValue) return {};
+            itemBody.insert(QStringLiteral("copperPriceCents"), *copperValue);
+        }
+        items.append(std::move(itemBody));
     }
     QJsonArray processSteps;
     for (int row = 0; row < processTable_->rowCount(); ++row) {
@@ -1104,7 +1119,14 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
         itemsTable_->setItem(row, 2, readOnly(QStringLiteral("%1 / %2").arg(item.value(QStringLiteral("specification")).toString(), item.value(QStringLiteral("unit")).toString())));
         itemsTable_->setItem(row, 3, new QTableWidgetItem(quantity(item.value(QStringLiteral("quantityMicros")).toInteger())));
         itemsTable_->setItem(row, 4, new QTableWidgetItem(QString::number(item.value(QStringLiteral("unitPriceCents")).toInteger() / 100.0, 'f', 2)));
-        itemsTable_->setItem(row, 5, new QTableWidgetItem(item.value(QStringLiteral("notes")).toString()));
+        // 铜价档：nullable 整数（元/吨，精确到分）；null 显示空串。
+        const auto copperValue = item.value(QStringLiteral("copperPriceCents"));
+        auto* copperItem = new QTableWidgetItem;
+        if (copperValue.isDouble()) {
+            copperItem->setText(QString::number(copperValue.toInteger() / 100.0, 'f', 2));
+        }
+        itemsTable_->setItem(row, 5, copperItem);
+        itemsTable_->setItem(row, 6, new QTableWidgetItem(item.value(QStringLiteral("notes")).toString()));
     }
     processTable_->setRowCount(0);
     for (const auto& value : quote.value(QStringLiteral("processSteps")).toArray()) {
