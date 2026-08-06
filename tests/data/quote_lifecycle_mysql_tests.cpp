@@ -81,6 +81,8 @@ manage::data::QuoteDraft draftFor(
         2'500'000,
         1234,
         QStringLiteral("snapshot line"),
+        // 电线类物料铜价档（元/吨，精确到分）。
+        std::optional<qint64>(7'000'000),
     }};
     return draft;
 }
@@ -155,6 +157,9 @@ void runLifecycle(QSqlDatabase database) {
                 QStringLiteral("created quote item count"));
         require(created.value->items.front().materialName == QStringLiteral("Original Material"),
                 QStringLiteral("material name snapshot"));
+        require(created.value->items.front().copperPriceCents ==
+                    std::optional<qint64>(7'000'000),
+                QStringLiteral("copper tier snapshot saved with quote"));
         require(created.value->customerContact == QStringLiteral("Original Contact"),
                 QStringLiteral("customer contact snapshot"));
 
@@ -263,6 +268,9 @@ void runLifecycle(QSqlDatabase database) {
                 QStringLiteral("clone receives a new quote number"));
         require(cloned.value->items.front().materialName == issued.value->items.front().materialName,
                 QStringLiteral("clone preserves frozen snapshots"));
+        require(cloned.value->items.front().copperPriceCents ==
+                    issued.value->items.front().copperPriceCents,
+                QStringLiteral("clone preserves copper tier snapshot"));
 
         const auto staleDelete = lifecycle.deleteDraft({
             cloned.value->summary.id,

@@ -318,6 +318,8 @@ QJsonObject draftPayload() {
                 {QStringLiteral("materialId"), 55},
                 {QStringLiteral("quantityMicros"), 2'500'000},
                 {QStringLiteral("unitPriceCents"), 4'936},
+                // 电线类物料：可选铜价档（元/吨，精确到分）。
+                {QStringLiteral("copperPriceCents"), 7'000'000},
                 {QStringLiteral("notes"), QStringLiteral("request line")},
                 {QStringLiteral("materialName"), QStringLiteral("FORGED MATERIAL")},
                 {QStringLiteral("subtotalCents"), 1},
@@ -411,8 +413,8 @@ void verifyDocumentJson(const QJsonObject& object) {
         QStringLiteral("materialId"), QStringLiteral("materialCode"),
         QStringLiteral("materialName"), QStringLiteral("specification"),
         QStringLiteral("unit"), QStringLiteral("quantityMicros"),
-        QStringLiteral("unitPriceCents"), QStringLiteral("subtotalCents"),
-        QStringLiteral("notes"),
+        QStringLiteral("unitPriceCents"), QStringLiteral("copperPriceCents"),
+        QStringLiteral("subtotalCents"), QStringLiteral("notes"),
     };
     for (const auto& key : itemKeys) {
         require(
@@ -428,6 +430,11 @@ void verifyDocumentJson(const QJsonObject& object) {
     require(
         item.value(QStringLiteral("subtotalCents")).toInteger() == 12'340,
         "server subtotal returned instead of forged subtotal"
+    );
+    // 快照行无铜价档时输出 JSON null。
+    require(
+        item.value(QStringLiteral("copperPriceCents")).isNull(),
+        "snapshot without copper tier serializes as null"
     );
 }
 
@@ -674,6 +681,39 @@ void checkValidationAndErrors(
         port, QStringLiteral("/api/v1/quotes/7"), token
     )));
     require(response.status == 400, "delete requires revision query");
+
+    // 铜价档校验：负数拒绝（400），非数字拒绝（400）。
+    auto negativeCopper = draftPayload();
+    auto negativeItems = negativeCopper.value(QStringLiteral("items")).toArray();
+    negativeItems[0] = QJsonObject{
+        {QStringLiteral("materialId"), 55},
+        {QStringLiteral("quantityMicros"), 2'500'000},
+        {QStringLiteral("unitPriceCents"), 4'936},
+        {QStringLiteral("copperPriceCents"), -1},
+    };
+    negativeCopper.insert(QStringLiteral("items"), negativeItems);
+    response = sendJson(
+        network, port, QByteArrayLiteral("POST"),
+        QStringLiteral("/api/v1/quotes"), negativeCopper, token
+    );
+    require(response.status == 400,
+            "negative copper tier returns 400");
+
+    auto textCopper = draftPayload();
+    auto textItems = textCopper.value(QStringLiteral("items")).toArray();
+    textItems[0] = QJsonObject{
+        {QStringLiteral("materialId"), 55},
+        {QStringLiteral("quantityMicros"), 2'500'000},
+        {QStringLiteral("unitPriceCents"), 4'936},
+        {QStringLiteral("copperPriceCents"), QStringLiteral("high")},
+    };
+    textCopper.insert(QStringLiteral("items"), textItems);
+    response = sendJson(
+        network, port, QByteArrayLiteral("POST"),
+        QStringLiteral("/api/v1/quotes"), textCopper, token
+    );
+    require(response.status == 400,
+            "non-numeric copper tier returns 400");
 
     struct Mapping final {
         manage::data::QuoteErrorCode code;
