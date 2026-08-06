@@ -213,6 +213,7 @@ QJsonObject materialJson(const manage::data::Material& material) {
         {QStringLiteral("specification"), material.specification},
         {QStringLiteral("unit"), material.unit},
         {QStringLiteral("category"), material.category},
+        {QStringLiteral("isCopperBased"), material.isCopperBased},
         {QStringLiteral("currentUnitPriceCents"), material.currentUnitPriceCents},
         {QStringLiteral("isEnabled"), material.isEnabled},
         {QStringLiteral("revision"), static_cast<qint64>(material.revision)},
@@ -233,6 +234,44 @@ QJsonObject customerJson(const manage::data::Customer& customer) {
         {QStringLiteral("createdAt"), customer.createdAt.toUTC().toString(Qt::ISODateWithMs)},
         {QStringLiteral("updatedAt"), customer.updatedAt.toUTC().toString(Qt::ISODateWithMs)},
     };
+}
+
+QJsonObject materialSupplierJson(const manage::data::MaterialSupplier& supplier) {
+    return {
+        {QStringLiteral("id"), supplier.id},
+        {QStringLiteral("materialId"), supplier.materialId},
+        {QStringLiteral("supplierName"), supplier.supplierName},
+        {QStringLiteral("contactName"), supplier.contactName},
+        {QStringLiteral("phone"), supplier.phone},
+        {QStringLiteral("isDefault"), supplier.isDefault},
+        {QStringLiteral("isEnabled"), supplier.isEnabled},
+        {QStringLiteral("leadDays"), supplier.leadDays},
+        {QStringLiteral("revision"), static_cast<qint64>(supplier.revision)},
+        {QStringLiteral("createdAt"), supplier.createdAt.toUTC().toString(Qt::ISODateWithMs)},
+        {QStringLiteral("updatedAt"), supplier.updatedAt.toUTC().toString(Qt::ISODateWithMs)},
+    };
+}
+
+QJsonObject materialPriceJson(const manage::data::MaterialPrice& price) {
+    QJsonObject object{
+        {QStringLiteral("id"), price.id},
+        {QStringLiteral("supplierId"), price.supplierId},
+        {QStringLiteral("unitPriceCents"), price.unitPriceCents},
+        {QStringLiteral("isDefault"), price.isDefault},
+        {QStringLiteral("isEnabled"), price.isEnabled},
+        {QStringLiteral("revision"), static_cast<qint64>(price.revision)},
+        {QStringLiteral("createdAt"), price.createdAt.toUTC().toString(Qt::ISODateWithMs)},
+        {QStringLiteral("updatedAt"), price.updatedAt.toUTC().toString(Qt::ISODateWithMs)},
+    };
+    if (price.copperPriceCents.has_value()) {
+        object.insert(
+            QStringLiteral("copperPriceCents"),
+            static_cast<qint64>(*price.copperPriceCents)
+        );
+    } else {
+        object.insert(QStringLiteral("copperPriceCents"), QJsonValue::Null);
+    }
+    return object;
 }
 
 template <typename T, typename ToJson>
@@ -270,6 +309,7 @@ std::optional<manage::data::MaterialDraft> materialDraft(
         !readString(object, QStringLiteral("specification"), &draft.specification, false) ||
         !readString(object, QStringLiteral("unit"), &draft.unit, true) ||
         !readString(object, QStringLiteral("category"), &draft.category, false) ||
+        !readBool(object, QStringLiteral("isCopperBased"), &draft.isCopperBased, false, false) ||
         !readInteger(
             object,
             QStringLiteral("currentUnitPriceCents"),
@@ -281,6 +321,73 @@ std::optional<manage::data::MaterialDraft> materialDraft(
             QStringLiteral("material fields have invalid or missing types")
         );
         return std::nullopt;
+    }
+    return draft;
+}
+
+std::optional<manage::data::MaterialSupplierDraft> materialSupplierDraft(
+    const QJsonObject& object,
+    QHttpServerResponse* failure
+) {
+    manage::data::MaterialSupplierDraft draft;
+    if (!readString(object, QStringLiteral("supplierName"), &draft.supplierName, true) ||
+        !readString(object, QStringLiteral("contactName"), &draft.contactName, false) ||
+        !readString(object, QStringLiteral("phone"), &draft.phone, false) ||
+        !readBool(object, QStringLiteral("isDefault"), &draft.isDefault, false, false) ||
+        !readBool(object, QStringLiteral("isEnabled"), &draft.isEnabled, false, true)) {
+        *failure = invalidJsonResponse(
+            QStringLiteral("supplier fields have invalid or missing types")
+        );
+        return std::nullopt;
+    }
+    qint64 leadDays = 0;
+    if (!readInteger(object, QStringLiteral("leadDays"), &leadDays, false, 0) ||
+        leadDays > std::numeric_limits<int>::max()) {
+        *failure = invalidJsonResponse(
+            QStringLiteral("leadDays must be a non-negative safe integer")
+        );
+        return std::nullopt;
+    }
+    draft.leadDays = static_cast<int>(leadDays);
+    return draft;
+}
+
+std::optional<manage::data::MaterialPriceDraft> materialPriceDraft(
+    const QJsonObject& object,
+    QHttpServerResponse* failure
+) {
+    manage::data::MaterialPriceDraft draft;
+    if (!readInteger(
+            object,
+            QStringLiteral("unitPriceCents"),
+            &draft.unitPriceCents,
+            true
+        ) ||
+        !readBool(object, QStringLiteral("isDefault"), &draft.isDefault, false, false) ||
+        !readBool(object, QStringLiteral("isEnabled"), &draft.isEnabled, false, true)) {
+        *failure = invalidJsonResponse(
+            QStringLiteral("price fields have invalid or missing types")
+        );
+        return std::nullopt;
+    }
+    if (object.contains(QStringLiteral("copperPriceCents"))) {
+        if (object.value(QStringLiteral("copperPriceCents")).isNull()) {
+            draft.copperPriceCents.reset();
+        } else {
+            qint64 copper = 0;
+            if (!readInteger(
+                    object,
+                    QStringLiteral("copperPriceCents"),
+                    &copper,
+                    true
+                )) {
+                *failure = invalidJsonResponse(
+                    QStringLiteral("copperPriceCents must be a non-negative integer or null")
+                );
+                return std::nullopt;
+            }
+            draft.copperPriceCents = copper;
+        }
     }
     return draft;
 }
@@ -548,6 +655,325 @@ void registerCatalogRoutes(
             }
             const auto result = service->updateCustomer(id, *expectedRevision, *draft);
             return result.ok() ? QHttpServerResponse(customerJson(*result.value))
+                               : errorResponse(*result.error);
+        }
+    );
+
+    // 物料供应商分支
+    server.route(
+        QStringLiteral("/api/v1/materials/<arg>/suppliers"),
+        QHttpServerRequest::Method::Get,
+        [service, authService](
+            qint64 materialId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto query = pageQuery(request, false, &failure);
+            if (!query.has_value()) {
+                return failure;
+            }
+            return pageResponse(
+                service->listMaterialSuppliers(materialId, *query),
+                materialSupplierJson
+            );
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/materials/<arg>/suppliers"),
+        QHttpServerRequest::Method::Post,
+        [service, authService](
+            qint64 materialId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            const auto draft = materialSupplierDraft(*object, &failure);
+            if (!draft.has_value()) {
+                return failure;
+            }
+            const auto result = service->createMaterialSupplier(materialId, *draft);
+            return result.ok()
+                       ? QHttpServerResponse(
+                             materialSupplierJson(*result.value),
+                             StatusCode::Created
+                         )
+                       : errorResponse(*result.error);
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/materials/<arg>/suppliers/<arg>"),
+        QHttpServerRequest::Method::Get,
+        [service, authService](
+            qint64 materialId,
+            qint64 supplierId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
+            Q_UNUSED(materialId);
+            const auto result = service->getMaterialSupplier(supplierId);
+            return result.ok()
+                       ? QHttpServerResponse(materialSupplierJson(*result.value))
+                       : errorResponse(*result.error);
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/materials/<arg>/suppliers/<arg>"),
+        QHttpServerRequest::Method::Put,
+        [service, authService](
+            qint64 materialId,
+            qint64 supplierId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            Q_UNUSED(materialId);
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            const auto draft = materialSupplierDraft(*object, &failure);
+            const auto expectedRevision = revision(*object, &failure);
+            if (!draft.has_value() || !expectedRevision.has_value()) {
+                return failure;
+            }
+            const auto result =
+                service->updateMaterialSupplier(supplierId, *expectedRevision, *draft);
+            return result.ok()
+                       ? QHttpServerResponse(materialSupplierJson(*result.value))
+                       : errorResponse(*result.error);
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/materials/<arg>/suppliers/<arg>/enabled"),
+        QHttpServerRequest::Method::Patch,
+        [service, authService](
+            qint64 materialId,
+            qint64 supplierId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            Q_UNUSED(materialId);
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            bool enabled = false;
+            const auto expectedRevision = revision(*object, &failure);
+            if (!expectedRevision.has_value() ||
+                !readBool(*object, QStringLiteral("isEnabled"), &enabled, true)) {
+                return invalidJsonResponse(
+                    QStringLiteral("isEnabled must be a boolean and revision is required")
+                );
+            }
+            const auto result = service->setMaterialSupplierEnabled(
+                supplierId,
+                *expectedRevision,
+                enabled
+            );
+            return result.ok()
+                       ? QHttpServerResponse(materialSupplierJson(*result.value))
+                       : errorResponse(*result.error);
+        }
+    );
+
+    // 供应商价格分支（电线类按铜价区分）
+    server.route(
+        QStringLiteral("/api/v1/suppliers/<arg>/prices"),
+        QHttpServerRequest::Method::Get,
+        [service, authService](
+            qint64 supplierId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto query = pageQuery(request, false, &failure);
+            if (!query.has_value()) {
+                return failure;
+            }
+            return pageResponse(
+                service->listMaterialPrices(supplierId, *query),
+                materialPriceJson
+            );
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/suppliers/<arg>/prices"),
+        QHttpServerRequest::Method::Post,
+        [service, authService](
+            qint64 supplierId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            const auto draft = materialPriceDraft(*object, &failure);
+            if (!draft.has_value()) {
+                return failure;
+            }
+            const auto result = service->createMaterialPrice(supplierId, *draft);
+            return result.ok()
+                       ? QHttpServerResponse(
+                             materialPriceJson(*result.value),
+                             StatusCode::Created
+                         )
+                       : errorResponse(*result.error);
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/suppliers/<arg>/prices/<arg>"),
+        QHttpServerRequest::Method::Get,
+        [service, authService](
+            qint64 supplierId,
+            qint64 priceId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
+            Q_UNUSED(supplierId);
+            const auto result = service->getMaterialPrice(priceId);
+            return result.ok() ? QHttpServerResponse(materialPriceJson(*result.value))
+                               : errorResponse(*result.error);
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/suppliers/<arg>/prices/<arg>"),
+        QHttpServerRequest::Method::Put,
+        [service, authService](
+            qint64 supplierId,
+            qint64 priceId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            Q_UNUSED(supplierId);
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            const auto draft = materialPriceDraft(*object, &failure);
+            const auto expectedRevision = revision(*object, &failure);
+            if (!draft.has_value() || !expectedRevision.has_value()) {
+                return failure;
+            }
+            const auto result =
+                service->updateMaterialPrice(priceId, *expectedRevision, *draft);
+            return result.ok() ? QHttpServerResponse(materialPriceJson(*result.value))
+                               : errorResponse(*result.error);
+        }
+    );
+    server.route(
+        QStringLiteral("/api/v1/suppliers/<arg>/prices/<arg>/enabled"),
+        QHttpServerRequest::Method::Patch,
+        [service, authService](
+            qint64 supplierId,
+            qint64 priceId,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            Q_UNUSED(supplierId);
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            bool enabled = false;
+            const auto expectedRevision = revision(*object, &failure);
+            if (!expectedRevision.has_value() ||
+                !readBool(*object, QStringLiteral("isEnabled"), &enabled, true)) {
+                return invalidJsonResponse(
+                    QStringLiteral("isEnabled must be a boolean and revision is required")
+                );
+            }
+            const auto result = service->setMaterialPriceEnabled(
+                priceId,
+                *expectedRevision,
+                enabled
+            );
+            return result.ok() ? QHttpServerResponse(materialPriceJson(*result.value))
                                : errorResponse(*result.error);
         }
     );

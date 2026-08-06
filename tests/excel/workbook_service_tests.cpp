@@ -94,7 +94,7 @@ void importerReportsSpecificRows() {
     const QStringList headers{
         QStringLiteral("物料编码"), QStringLiteral("物料名称"), QStringLiteral("规格"),
         QStringLiteral("单位"), QStringLiteral("类别"), QStringLiteral("当前单价"),
-        QStringLiteral("启用")
+        QStringLiteral("启用"), QStringLiteral("供应商名称"), QStringLiteral("供货周期（天）")
     };
     for (int column = 1; column <= headers.size(); ++column) {
         document.write(1, column, headers.at(column - 1));

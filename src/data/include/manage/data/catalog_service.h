@@ -35,10 +35,52 @@ public:
         CustomerDraft draft
     ) const;
 
+    CatalogResult<Page<MaterialSupplier>> listMaterialSuppliers(
+        std::int64_t materialId,
+        PageQuery query
+    ) const;
+    CatalogResult<MaterialSupplier> getMaterialSupplier(std::int64_t id) const;
+    CatalogResult<MaterialSupplier> createMaterialSupplier(
+        std::int64_t materialId,
+        MaterialSupplierDraft draft
+    ) const;
+    CatalogResult<MaterialSupplier> updateMaterialSupplier(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        MaterialSupplierDraft draft
+    ) const;
+    CatalogResult<MaterialSupplier> setMaterialSupplierEnabled(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        bool enabled
+    ) const;
+
+    CatalogResult<Page<MaterialPrice>> listMaterialPrices(
+        std::int64_t supplierId,
+        PageQuery query
+    ) const;
+    CatalogResult<MaterialPrice> getMaterialPrice(std::int64_t id) const;
+    CatalogResult<MaterialPrice> createMaterialPrice(
+        std::int64_t supplierId,
+        MaterialPriceDraft draft
+    ) const;
+    CatalogResult<MaterialPrice> updateMaterialPrice(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        MaterialPriceDraft draft
+    ) const;
+    CatalogResult<MaterialPrice> setMaterialPriceEnabled(
+        std::int64_t id,
+        std::uint32_t expectedRevision,
+        bool enabled
+    ) const;
+
 private:
     static std::optional<CatalogError> validatePage(PageQuery* query);
     static std::optional<CatalogError> validateMaterial(MaterialDraft* draft);
     static std::optional<CatalogError> validateCustomer(CustomerDraft* draft);
+    static std::optional<CatalogError> validateMaterialSupplier(MaterialSupplierDraft* draft);
+    static std::optional<CatalogError> validateMaterialPrice(MaterialPriceDraft* draft);
     static CatalogError mapRepositoryError(const RepositoryError& error);
 
     std::shared_ptr<CatalogRepository> repository_;

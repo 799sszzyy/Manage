@@ -58,6 +58,14 @@ void validateRow(MaterialBatchResult& result, const MaterialBatchRow& row) {
         addError(result, row.sourceRow, QStringLiteral("currentUnitPriceCents"),
                  QStringLiteral("当前单价不能为负数"));
     }
+    if (row.supplierName.size() > 200) {
+        addError(result, row.sourceRow, QStringLiteral("supplierName"),
+                 QStringLiteral("供应商名称最多 200 个字符"));
+    }
+    if (row.leadDays < 0 || row.leadDays > 36'500) {
+        addError(result, row.sourceRow, QStringLiteral("leadDays"),
+                 QStringLiteral("供货周期应为 0-36500 的整数天数"));
+    }
 }
 
 bool lookupExistingCodes(
@@ -177,6 +185,19 @@ MaterialBatchResult MaterialBatchService::importMaterials(
         "current_unit_price_cents = VALUES(current_unit_price_cents), "
         "is_enabled = VALUES(is_enabled), revision = revision + 1"
     ));
+
+    // 供应商分支 upsert：导入行填写供应商名称时同步创建/更新供应商，
+    // 并写入交货周期（天）。同一批中同一物料+供应商只处理一次。
+    QSqlQuery supplierQuery(database_);
+    supplierQuery.prepare(QStringLiteral(
+        "INSERT INTO material_suppliers "
+        "(material_id, supplier_name, contact_name, phone, is_default, is_enabled, lead_days) "
+        "SELECT id, :supplierName, '', '', FALSE, TRUE, :leadDays FROM materials "
+        "WHERE code = :code "
+        "ON DUPLICATE KEY UPDATE lead_days = :leadDays, revision = revision + 1"
+    ));
+    QSet<QString> handledSupplierKeys;
+
     for (const auto& row : rows) {
         if (!upsertRow(upsert, row.material)) {
             const auto message = upsert.lastError().text();
@@ -186,6 +207,27 @@ MaterialBatchResult MaterialBatchService::importMaterials(
             return result;
         }
         upsert.finish();
+
+        if (!row.supplierName.isEmpty()) {
+            const auto key = QStringLiteral("%1|%2").arg(
+                row.material.code, row.supplierName
+            );
+            if (handledSupplierKeys.contains(key)) {
+                continue;
+            }
+            handledSupplierKeys.insert(key);
+            supplierQuery.bindValue(QStringLiteral(":supplierName"), row.supplierName);
+            supplierQuery.bindValue(QStringLiteral(":leadDays"), row.leadDays);
+            supplierQuery.bindValue(QStringLiteral(":code"), row.material.code);
+            if (!supplierQuery.exec()) {
+                const auto message = supplierQuery.lastError().text();
+                database_.rollback();
+                addError(result, row.sourceRow, QStringLiteral("database"),
+                         QStringLiteral("供应商分支导入已回滚：%1").arg(message));
+                return result;
+            }
+            supplierQuery.finish();
+        }
     }
     if (!database_.commit()) {
         const auto message = database_.lastError().text();

@@ -145,6 +145,172 @@ void customerLifecycleUsesRevision() {
     );
 }
 
+void supplierBranchSupportsMultipleSuppliers() {
+    auto repository = std::make_shared<InMemoryCatalogRepository>();
+    manage::data::CatalogService service(repository);
+    const auto material = service.createMaterial(validMaterial());
+    require(material.ok(), "material must be created for supplier branch");
+
+    manage::data::MaterialSupplierDraft first{
+        QStringLiteral(" 供应商甲 "),
+        QStringLiteral(" 张三 "),
+        QStringLiteral(" 13800000001 "),
+        false,
+        true,
+    };
+    const auto created = service.createMaterialSupplier(material.value->id, first);
+    require(created.ok(), "first supplier must be created");
+    require(
+        created.value->supplierName == QStringLiteral("供应商甲"),
+        "supplier name must be trimmed"
+    );
+    require(created.value->revision == 1, "first supplier revision");
+
+    // 第二个供应商：同一物料可维护多个供应商分支
+    manage::data::MaterialSupplierDraft second{
+        QStringLiteral("供应商乙"),
+        QStringLiteral("李四"),
+        QStringLiteral("13800000002"),
+        false,
+        true,
+    };
+    const auto created2 = service.createMaterialSupplier(material.value->id, second);
+    require(created2.ok(), "second supplier must be created");
+    require(created2.value->id != created.value->id, "supplier ids must differ");
+
+    // 同一物料下供应商名称唯一
+    const auto duplicate = service.createMaterialSupplier(material.value->id, first);
+    require(!duplicate.ok(), "duplicate supplier name must fail");
+    require(
+        duplicate.error->code == manage::data::CatalogErrorCode::DuplicateCode,
+        "duplicate supplier error code"
+    );
+
+    // 列表包含两个供应商
+    manage::data::PageQuery query;
+    const auto listed = service.listMaterialSuppliers(material.value->id, query);
+    require(listed.ok(), "supplier list must succeed");
+    require(listed.value->total == 2, "supplier list total");
+    require(listed.value->items.size() == 2, "supplier list item count");
+
+    // 更新与启停
+    manage::data::MaterialSupplierDraft changed = second;
+    changed.phone = QStringLiteral("13900000000");
+    const auto updated = service.updateMaterialSupplier(
+        created2.value->id,
+        created2.value->revision,
+        changed
+    );
+    require(updated.ok(), "supplier update must pass");
+    require(updated.value->phone == QStringLiteral("13900000000"), "supplier phone updated");
+    require(updated.value->revision == 2, "supplier revision increments");
+
+    const auto disabled = service.setMaterialSupplierEnabled(
+        created.value->id,
+        created.value->revision,
+        false
+    );
+    require(disabled.ok(), "supplier disable must pass");
+    require(!disabled.value->isEnabled, "supplier must be disabled");
+
+    // 校验：空供应商名称被拒绝
+    manage::data::MaterialSupplierDraft emptyName{
+        QStringLiteral("   "),
+        QString(),
+        QString(),
+        false,
+        true,
+    };
+    const auto invalid = service.createMaterialSupplier(material.value->id, emptyName);
+    require(!invalid.ok(), "empty supplier name must fail");
+    require(
+        invalid.error->field == QStringLiteral("supplierName"),
+        "supplier name validation field"
+    );
+}
+
+void priceBranchSupportsCopperAndPlainPrices() {
+    auto repository = std::make_shared<InMemoryCatalogRepository>();
+    manage::data::CatalogService service(repository);
+    const auto material = service.createMaterial(validMaterial());
+    require(material.ok(), "material must be created for price branch");
+
+    manage::data::MaterialSupplierDraft supplierDraft{
+        QStringLiteral("供应商甲"),
+        QString(),
+        QString(),
+        false,
+        true,
+    };
+    const auto supplier = service.createMaterialSupplier(material.value->id, supplierDraft);
+    require(supplier.ok(), "supplier must be created for price branch");
+
+    // 普通物料价格分支：铜价为 null
+    manage::data::MaterialPriceDraft plainPrice;
+    plainPrice.unitPriceCents = 12'345;
+    const auto plain = service.createMaterialPrice(supplier.value->id, plainPrice);
+    require(plain.ok(), "plain price must be created");
+    require(!plain.value->copperPriceCents.has_value(), "plain price has no copper price");
+
+    // 电线类物料：同一供应商按不同铜价建立不同价格
+    manage::data::MaterialPriceDraft copperLow;
+    copperLow.copperPriceCents = 7'200;
+    copperLow.unitPriceCents = 10'000;
+    const auto low = service.createMaterialPrice(supplier.value->id, copperLow);
+    require(low.ok(), "copper price branch must be created");
+    require(
+        low.value->copperPriceCents.has_value() && *low.value->copperPriceCents == 7'200,
+        "copper price value"
+    );
+
+    manage::data::MaterialPriceDraft copperHigh;
+    copperHigh.copperPriceCents = 7'800;
+    copperHigh.unitPriceCents = 12'000;
+    const auto high = service.createMaterialPrice(supplier.value->id, copperHigh);
+    require(high.ok(), "second copper price branch must be created");
+
+    // 同一供应商同一铜价唯一
+    const auto duplicate = service.createMaterialPrice(supplier.value->id, copperLow);
+    require(!duplicate.ok(), "duplicate copper price must fail");
+    require(
+        duplicate.error->code == manage::data::CatalogErrorCode::DuplicateCode,
+        "duplicate copper price error code"
+    );
+
+    // 列表包含三条价格
+    manage::data::PageQuery query;
+    const auto listed = service.listMaterialPrices(supplier.value->id, query);
+    require(listed.ok(), "price list must succeed");
+    require(listed.value->total == 3, "price list total");
+
+    // 校验：负铜价和负单价被拒绝
+    manage::data::MaterialPriceDraft negativeCopper;
+    negativeCopper.copperPriceCents = -1;
+    const auto invalidCopper = service.createMaterialPrice(supplier.value->id, negativeCopper);
+    require(!invalidCopper.ok(), "negative copper price must fail");
+    require(
+        invalidCopper.error->field == QStringLiteral("copperPriceCents"),
+        "copper price validation field"
+    );
+
+    manage::data::MaterialPriceDraft negativeUnit;
+    negativeUnit.unitPriceCents = -1;
+    const auto invalidUnit = service.createMaterialPrice(supplier.value->id, negativeUnit);
+    require(!invalidUnit.ok(), "negative unit price must fail");
+
+    // 更新价格分支
+    manage::data::MaterialPriceDraft updatedPrice = copperHigh;
+    updatedPrice.unitPriceCents = 12'500;
+    const auto updated = service.updateMaterialPrice(
+        high.value->id,
+        high.value->revision,
+        updatedPrice
+    );
+    require(updated.ok(), "price update must pass");
+    require(updated.value->unitPriceCents == 12'500, "price updated value");
+    require(updated.value->revision == 2, "price revision increments");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -154,6 +320,8 @@ int main(int argc, char* argv[]) {
         {"material paging", materialPagingSearchAndEnabledFilter},
         {"material optimistic revision", optimisticRevisionPreventsLostUpdates},
         {"customer lifecycle", customerLifecycleUsesRevision},
+        {"supplier branch multi-supplier", supplierBranchSupportsMultipleSuppliers},
+        {"price branch copper and plain", priceBranchSupportsCopperAndPlainPrices},
     };
 
     std::size_t passed = 0;

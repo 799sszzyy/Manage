@@ -80,6 +80,67 @@ public:
                     }}},
                 });
             });
+        server.route(QStringLiteral("/api/v1/users/engineers"),
+            QHttpServerRequest::Method::Get,
+            [this](const QHttpServerRequest&) {
+                return QHttpServerResponse(QJsonObject{
+                    {QStringLiteral("items"), QJsonArray{
+                        QJsonObject{
+                            {QStringLiteral("id"), 1},
+                            {QStringLiteral("username"), QStringLiteral("eng1")},
+                            {QStringLiteral("displayName"), QStringLiteral("工程师一")},
+                            {QStringLiteral("role"), QStringLiteral("quoter")},
+                        },
+                        QJsonObject{
+                            {QStringLiteral("id"), 2},
+                            {QStringLiteral("username"), QStringLiteral("eng2")},
+                            {QStringLiteral("displayName"), QStringLiteral("工程师二")},
+                            {QStringLiteral("role"), QStringLiteral("quoter")},
+                        },
+                    }},
+                });
+            });
+        server.route(QStringLiteral("/api/v1/statistics/engineer-responsibility"),
+            QHttpServerRequest::Method::Get,
+            [this](const QHttpServerRequest& request) {
+                ++engineerCalls;
+                engineerQuery = QUrlQuery(request.url());
+                return QHttpServerResponse(QJsonObject{
+                    {QStringLiteral("summary"), QJsonObject{
+                        {QStringLiteral("assignedCount"), 6},
+                        {QStringLiteral("submittedCount"), 5},
+                        {QStringLiteral("unsubmittedCount"), 1},
+                        {QStringLiteral("onTimeCount"), 4},
+                        {QStringLiteral("lateCount"), 1},
+                        {QStringLiteral("onTimeRateBasisPoints"), 8'000},
+                        {QStringLiteral("averageDeviationDays"), -2},
+                    }},
+                    {QStringLiteral("byEngineer"), QJsonArray{QJsonObject{
+                        {QStringLiteral("engineerId"), 1},
+                        {QStringLiteral("engineerName"), QStringLiteral("工程师一")},
+                        {QStringLiteral("summary"), QJsonObject{
+                            {QStringLiteral("assignedCount"), 6},
+                            {QStringLiteral("submittedCount"), 5},
+                            {QStringLiteral("unsubmittedCount"), 1},
+                            {QStringLiteral("onTimeCount"), 4},
+                            {QStringLiteral("lateCount"), 1},
+                            {QStringLiteral("onTimeRateBasisPoints"), 8'000},
+                            {QStringLiteral("averageDeviationDays"), -2},
+                        }},
+                    }}},
+                    {QStringLiteral("tasks"), QJsonArray{QJsonObject{
+                        {QStringLiteral("quoteId"), 9},
+                        {QStringLiteral("quoteNumber"), QStringLiteral("Q-20260901-9")},
+                        {QStringLiteral("customerName"), QStringLiteral("快照客户")},
+                        {QStringLiteral("engineerName"), QStringLiteral("工程师一")},
+                        {QStringLiteral("status"), QStringLiteral("issued")},
+                        {QStringLiteral("expectedCompletionAt"), QStringLiteral("2026-09-15T00:00:00.000Z")},
+                        {QStringLiteral("submittedAt"), QStringLiteral("2026-09-10T00:00:00.000Z")},
+                        {QStringLiteral("onTime"), true},
+                        {QStringLiteral("deviationDays"), -5},
+                    }}},
+                });
+            });
         require(tcp.listen(QHostAddress::LocalHost, 0) && server.bind(&tcp), "mock listen");
     }
     QUrl baseUrl() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(tcp.serverPort())); }
@@ -87,6 +148,8 @@ public:
     QTcpServer tcp;
     QUrlQuery query;
     int getCalls{};
+    QUrlQuery engineerQuery;
+    int engineerCalls{};
 };
 
 } // namespace
@@ -124,6 +187,46 @@ int main(int argc, char* argv[]) {
         QCoreApplication::processEvents();
         require(api.getCalls == 1, "invalid local range must not send request");
         require(child<QLabel>(widget, "statisticsMessageLabel")->text().contains(QStringLiteral("不能晚于")), "friendly validation");
+
+        // ---- 工程师责任制页签 ----
+        require(waitUntil([&] { return child<QComboBox>(widget, "statisticsEngineerCombo")->count() >= 3; }),
+                "engineer candidates loaded");
+        auto* engineerCombo = child<QComboBox>(widget, "statisticsEngineerCombo");
+        require(engineerCombo->itemText(0) == QStringLiteral("全部工程师"), "all engineers default item");
+        engineerCombo->setCurrentIndex(1); // 工程师一
+        auto* periodTypeCombo = child<QComboBox>(widget, "statisticsPeriodTypeCombo");
+        require(periodTypeCombo->currentData().toString() == QStringLiteral("month"), "month period type default");
+        child<QLineEdit>(widget, "statisticsPeriodEdit")->setText(QStringLiteral("2026-09"));
+        child<QPushButton>(widget, "statisticsEngineerRefreshButton")->click();
+        require(waitUntil([&] { return api.engineerCalls == 1 && child<QPushButton>(widget, "statisticsEngineerRefreshButton")->isEnabled(); }),
+                "engineer request completes");
+        require(api.engineerQuery.queryItemValue(QStringLiteral("periodType")) == QStringLiteral("month"), "engineer period type filter");
+        require(api.engineerQuery.queryItemValue(QStringLiteral("period")) == QStringLiteral("2026-09"), "engineer period filter");
+        require(api.engineerQuery.queryItemValue(QStringLiteral("engineerId")) == QStringLiteral("1"), "engineer id filter");
+        require(child<QLabel>(widget, "statisticsEngineerRateLabel")->text() == QStringLiteral("80.00%"), "engineer on time rate display");
+        require(child<QLabel>(widget, "statisticsEngineerDeviationLabel")->text() == QStringLiteral("-2 天"), "engineer deviation display");
+        require(child<QTableWidget>(widget, "statisticsEngineerTaskTable")->rowCount() == 1, "engineer task detail rows");
+        require(child<QTableWidget>(widget, "statisticsEngineerTaskTable")->item(0, 0)->text() == QStringLiteral("Q-20260901-9"), "engineer task quote number");
+        require(child<QTableWidget>(widget, "statisticsEngineerTaskTable")->item(0, 6)->text() == QStringLiteral("准时"), "engineer task on time label");
+        require(!child<QTableWidget>(widget, "statisticsEngineerGroupTable")->isVisible(), "group table hidden for single engineer");
+
+        // 全部工程师时显示分组表。
+        engineerCombo->setCurrentIndex(0);
+        child<QPushButton>(widget, "statisticsEngineerRefreshButton")->click();
+        require(waitUntil([&] { return api.engineerCalls == 2 && child<QPushButton>(widget, "statisticsEngineerRefreshButton")->isEnabled(); }),
+                "all engineers request completes");
+        require(!api.engineerQuery.hasQueryItem(QStringLiteral("engineerId")), "engineer id omitted for all");
+        require(child<QTableWidget>(widget, "statisticsEngineerGroupTable")->isVisible(), "group table visible for all engineers");
+        require(child<QTableWidget>(widget, "statisticsEngineerGroupTable")->rowCount() == 1, "engineer group rows");
+        require(child<QTableWidget>(widget, "statisticsEngineerGroupTable")->item(0, 0)->text() == QStringLiteral("工程师一"), "engineer group name");
+
+        // 无效期间不发请求。
+        const auto engineerCallsBefore = api.engineerCalls;
+        child<QLineEdit>(widget, "statisticsPeriodEdit")->setText(QStringLiteral("2026-13"));
+        child<QPushButton>(widget, "statisticsEngineerRefreshButton")->click();
+        QCoreApplication::processEvents();
+        require(api.engineerCalls == engineerCallsBefore, "invalid period must not send request");
+        require(child<QLabel>(widget, "statisticsEngineerMessageLabel")->text().contains(QStringLiteral("期间格式")), "engineer period friendly validation");
 
         std::cout << "[PASS] statistics widget filters and read-only presentation\n";
         return EXIT_SUCCESS;

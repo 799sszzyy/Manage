@@ -391,6 +391,10 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
         {1, "001_initial_schema"},
         {2, "002_quote_bom_template"},
         {3, "003_quote_bom_quantity"},
+        {4, "004_material_supplier_pricing"},
+        {5, "005_lead_time_process"},
+        {6, "006_engineer_responsibility"},
+        {7, "007_task_dispatch"},
     };
 
     QList<Migration> migrations;

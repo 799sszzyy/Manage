@@ -56,6 +56,10 @@ manage::data::QuoteDocument sampleDocument(
         QStringLiteral("Snapshot Customer"),
         9,
         1'000'000,
+        0, // bomLeadDays
+        1, // laborCount
+        0, // processTotalMinutes
+        0, // estimatedDeliveryDays
         status,
         18'360,
         3,

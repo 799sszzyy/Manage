@@ -1,5 +1,6 @@
 #include "manage/data/mysql_quote_lifecycle.h"
 
+#include "manage/domain/lead_time_calculator.h"
 #include "manage/domain/quote_calculator.h"
 
 #include <QSqlError>
@@ -16,13 +17,16 @@ namespace {
 constexpr auto kQuoteDocumentColumns =
     "q.id, q.quote_number, q.customer_id, q.customer_name_snapshot, "
     "q.customer_contact_snapshot, q.customer_phone_snapshot, "
-    "q.customer_address_snapshot, q.bom_template_id, q.bom_quantity_micros, q.status, "
+    "q.customer_address_snapshot, q.bom_template_id, q.bom_quantity_micros, "
+    "q.bom_lead_days, q.labor_count, q.process_total_minutes, "
+    "q.estimated_delivery_days, q.status, "
     "q.material_cost_cents, q.freight_cents, q.other_fees_cents, "
     "q.markup_basis_points, q.markup_amount_cents, "
     "q.price_before_tax_cents, q.tax_basis_points, q.tax_amount_cents, "
     "q.price_with_tax_cents, q.notes, q.source_quote_id, q.created_by, "
     "q.updated_by, q.issued_at, q.voided_at, q.revision, q.created_at, "
-    "q.updated_at";
+    "q.updated_at, q.assigned_engineer_id, q.expected_completion_at, "
+    "q.engineer_submitted_at";
 
 template<typename T>
 QuoteResult<T> failure(QuoteErrorCode code, const QString& message) {
@@ -55,6 +59,12 @@ QVariant optionalIdValue(const std::optional<qint64>& value) {
     return value.has_value()
                ? idValue(*value)
                : QVariant(QMetaType::fromType<qlonglong>());
+}
+
+QVariant optionalDateTimeValue(const std::optional<QDateTime>& value) {
+    return value.has_value() && value->isValid()
+               ? QVariant::fromValue<QDateTime>(*value)
+               : QVariant(QMetaType::fromType<QDateTime>());
 }
 
 QString nonNull(const QString& value) {
@@ -102,6 +112,12 @@ struct PreparedLine final {
     QString notes;
 };
 
+// 报价工序步骤快照：名称 + 单人工时（分钟）。
+struct PreparedProcessLine final {
+    QString stepName;
+    qint64 laborMinutes{};
+};
+
 struct PreparedDraft final {
     qint64 customerId{};
     QString customerName;
@@ -110,6 +126,12 @@ struct PreparedDraft final {
     QString customerAddress;
     std::optional<qint64> bomTemplateId;
     qint64 bomQuantityMicros{1'000'000};
+    // 交期快照：BOM 交期 = 组成物料最大交期；
+    // 预计发货交期 = BOM 交期 + ceil(工序总工时 / 劳动人数 / 每日工作分钟)。
+    int bomLeadDays{0};
+    int laborCount{1};
+    qint64 processTotalMinutes{0};
+    int estimatedDeliveryDays{0};
     qint64 materialCostCents{};
     qint64 freightCents{};
     qint64 otherFeesCents{};
@@ -120,7 +142,11 @@ struct PreparedDraft final {
     qint64 taxAmountCents{};
     qint64 priceWithTaxCents{};
     QString notes;
+    // 工程师责任制：指派工程师账号与预测 BOM 构建完成时间。
+    std::optional<qint64> engineerId;
+    std::optional<QDateTime> expectedCompletionAt;
     std::vector<PreparedLine> items;
+    std::vector<PreparedProcessLine> processSteps;
 };
 
 QuoteResult<bool> validateActor(QSqlDatabase database, qint64 actorUserId) {
@@ -174,6 +200,37 @@ QuoteResult<PreparedDraft> prepareDraft(
             QStringLiteral("bomQuantityMicros must be greater than zero")
         );
     }
+    if (draft.laborCount < 1 || draft.laborCount > 9'999) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("laborCount must be between 1 and 9999")
+        );
+    }
+    if (draft.processSteps.size() > 200) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("a quote cannot contain more than 200 process steps")
+        );
+    }
+    for (std::size_t index = 0; index < draft.processSteps.size(); ++index) {
+        const auto& step = draft.processSteps[index];
+        if (step.stepName.trimmed().isEmpty() ||
+            step.stepName.size() > 200) {
+            return failure<PreparedDraft>(
+                QuoteErrorCode::Validation,
+                QStringLiteral("processSteps[%1].stepName must contain 1-200 characters")
+                    .arg(index)
+            );
+        }
+        if (step.laborMinutes < 0 || step.laborMinutes > 1'440) {
+            return failure<PreparedDraft>(
+                QuoteErrorCode::Validation,
+                QStringLiteral(
+                    "processSteps[%1].laborMinutes must be between 0 and 1440 minutes"
+                ).arg(index)
+            );
+        }
+    }
 
     const auto actor = validateActor(database, actorUserId);
     if (!actor.ok()) {
@@ -189,6 +246,22 @@ QuoteResult<PreparedDraft> prepareDraft(
     prepared.markupBasisPoints = draft.markupBasisPoints;
     prepared.taxBasisPoints = draft.taxBasisPoints;
     prepared.notes = nonNull(draft.notes);
+    // 工程师责任制字段：仅在草稿阶段允许指派/修改；发布后保持快照。
+    prepared.engineerId = draft.assignedEngineerId;
+    prepared.expectedCompletionAt = draft.expectedCompletionAt;
+    if (draft.assignedEngineerId.has_value() && *draft.assignedEngineerId <= 0) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("assignedEngineerId must be greater than zero")
+        );
+    }
+    if (draft.expectedCompletionAt.has_value() &&
+        !draft.expectedCompletionAt->isValid()) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("expectedCompletionAt must be a valid timestamp")
+        );
+    }
 
     QSqlQuery customer(database);
     customer.prepare(QStringLiteral(
@@ -232,6 +305,39 @@ QuoteResult<PreparedDraft> prepareDraft(
                 QStringLiteral("quote BOM does not exist")
             );
         }
+
+        // BOM 交期 = 组成该 BOM 的所有物料中，默认供应商交货周期最大者。
+        // 未配置供应商的物料按 0 天参与比较（不影响最大值）。
+        QSqlQuery lead(database);
+        lead.prepare(QStringLiteral(
+            "SELECT COALESCE(MAX(s.lead_days), 0) FROM bom_items bi "
+            "LEFT JOIN material_suppliers s ON s.material_id = bi.material_id "
+            "AND s.is_default = TRUE AND s.is_enabled = TRUE "
+            "WHERE bi.bom_template_id = :bomId"
+        ));
+        lead.bindValue(QStringLiteral(":bomId"), idValue(*draft.bomTemplateId));
+        if (!lead.exec()) {
+            return queryFailure<PreparedDraft>(
+                QStringLiteral("unable to read BOM lead days"), lead
+            );
+        }
+        if (!lead.next()) {
+            return failure<PreparedDraft>(
+                QuoteErrorCode::Infrastructure,
+                QStringLiteral("unable to read BOM lead days")
+            );
+        }
+        prepared.bomLeadDays = lead.value(0).toInt();
+    }
+
+    prepared.laborCount = draft.laborCount;
+    prepared.processSteps.reserve(draft.processSteps.size());
+    for (const auto& step : draft.processSteps) {
+        prepared.processSteps.push_back({
+            step.stepName.trimmed(),
+            step.laborMinutes,
+        });
+        prepared.processTotalMinutes += step.laborMinutes;
     }
 
     manage::domain::QuoteCalculationInput calculation;
@@ -304,6 +410,21 @@ QuoteResult<PreparedDraft> prepareDraft(
         );
     }
 
+    try {
+        // 预计发货交期 = BOM 交期 + ceil(工序总工时 / 劳动人数 / 每日工作分钟)。
+        prepared.estimatedDeliveryDays =
+            manage::domain::computeEstimatedDeliveryDays(
+                prepared.bomLeadDays,
+                prepared.processTotalMinutes,
+                prepared.laborCount
+            );
+    } catch (const manage::domain::LeadTimeError& error) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QString::fromStdString(error.what())
+        );
+    }
+
     return QuoteResult<PreparedDraft>::success(std::move(prepared));
 }
 
@@ -319,6 +440,10 @@ void bindPreparedHeader(
     query.bindValue(QStringLiteral(":customerAddress"), draft.customerAddress);
     query.bindValue(QStringLiteral(":bomTemplateId"), optionalIdValue(draft.bomTemplateId));
     query.bindValue(QStringLiteral(":bomQuantity"), idValue(draft.bomQuantityMicros));
+    query.bindValue(QStringLiteral(":bomLeadDays"), draft.bomLeadDays);
+    query.bindValue(QStringLiteral(":laborCount"), draft.laborCount);
+    query.bindValue(QStringLiteral(":processTotalMinutes"), idValue(draft.processTotalMinutes));
+    query.bindValue(QStringLiteral(":estimatedDeliveryDays"), draft.estimatedDeliveryDays);
     query.bindValue(QStringLiteral(":materialCost"), idValue(draft.materialCostCents));
     query.bindValue(QStringLiteral(":freight"), idValue(draft.freightCents));
     query.bindValue(QStringLiteral(":otherFees"), idValue(draft.otherFeesCents));
@@ -329,6 +454,11 @@ void bindPreparedHeader(
     query.bindValue(QStringLiteral(":taxAmount"), idValue(draft.taxAmountCents));
     query.bindValue(QStringLiteral(":withTax"), idValue(draft.priceWithTaxCents));
     query.bindValue(QStringLiteral(":notes"), draft.notes);
+    query.bindValue(QStringLiteral(":assignedEngineerId"), optionalIdValue(draft.engineerId));
+    query.bindValue(
+        QStringLiteral(":expectedCompletionAt"),
+        optionalDateTimeValue(draft.expectedCompletionAt)
+    );
     query.bindValue(QStringLiteral(":actor"), idValue(actorUserId));
 }
 
@@ -369,6 +499,34 @@ QuoteResult<bool> insertPreparedLines(
     return QuoteResult<bool>::success(true);
 }
 
+QuoteResult<bool> insertPreparedProcessItems(
+    QSqlDatabase database,
+    qint64 quoteId,
+    const std::vector<PreparedProcessLine>& steps
+) {
+    QSqlQuery query(database);
+    query.prepare(QStringLiteral(
+        "INSERT INTO quote_process_items (quote_id, line_no, "
+        "step_name_snapshot, labor_minutes_snapshot) VALUES "
+        "(:quoteId, :lineNo, :stepName, :laborMinutes)"
+    ));
+    for (std::size_t index = 0; index < steps.size(); ++index) {
+        const auto& step = steps[index];
+        query.bindValue(QStringLiteral(":quoteId"), idValue(quoteId));
+        query.bindValue(QStringLiteral(":lineNo"), static_cast<int>(index + 1));
+        query.bindValue(QStringLiteral(":stepName"), step.stepName);
+        query.bindValue(QStringLiteral(":laborMinutes"), idValue(step.laborMinutes));
+        if (!query.exec()) {
+            return queryFailure<bool>(
+                QStringLiteral("unable to save quote process step %1")
+                    .arg(index + 1),
+                query
+            );
+        }
+    }
+    return QuoteResult<bool>::success(true);
+}
+
 QuoteSummary readSummary(const QSqlQuery& query) {
     QuoteSummary summary;
     summary.id = query.value(0).toLongLong();
@@ -379,12 +537,19 @@ QuoteSummary readSummary(const QSqlQuery& query) {
         summary.bomTemplateId = query.value(4).toLongLong();
     }
     summary.bomQuantityMicros = query.value(5).toLongLong();
-    summary.status = quoteStatusFromCode(query.value(6).toString())
+    summary.bomLeadDays = query.value(6).toInt();
+    summary.laborCount = query.value(7).toInt();
+    summary.processTotalMinutes = query.value(8).toLongLong();
+    summary.estimatedDeliveryDays = query.value(9).toInt();
+    summary.status = quoteStatusFromCode(query.value(10).toString())
                          .value_or(QuoteStatus::Draft);
-    summary.priceWithTaxCents = query.value(7).toLongLong();
-    summary.revision = query.value(8).toInt();
-    summary.createdAt = query.value(9).toDateTime();
-    summary.updatedAt = query.value(10).toDateTime();
+    summary.priceWithTaxCents = query.value(11).toLongLong();
+    summary.revision = query.value(12).toInt();
+    summary.createdAt = query.value(13).toDateTime();
+    summary.updatedAt = query.value(14).toDateTime();
+    if (!query.value(15).isNull()) summary.assignedEngineerId = query.value(15).toLongLong();
+    if (!query.value(16).isNull()) summary.expectedCompletionAt = query.value(16).toDateTime();
+    if (!query.value(17).isNull()) summary.engineerSubmittedAt = query.value(17).toDateTime();
     return summary;
 }
 
@@ -401,29 +566,36 @@ QuoteDocument readDocumentHeader(const QSqlQuery& query) {
         document.summary.bomTemplateId = query.value(7).toLongLong();
     }
     document.summary.bomQuantityMicros = query.value(8).toLongLong();
-    document.summary.status = quoteStatusFromCode(query.value(9).toString())
+    document.summary.bomLeadDays = query.value(9).toInt();
+    document.summary.laborCount = query.value(10).toInt();
+    document.summary.processTotalMinutes = query.value(11).toLongLong();
+    document.summary.estimatedDeliveryDays = query.value(12).toInt();
+    document.summary.status = quoteStatusFromCode(query.value(13).toString())
                                   .value_or(QuoteStatus::Draft);
-    document.materialCostCents = query.value(10).toLongLong();
-    document.freightCents = query.value(11).toLongLong();
-    document.otherFeesCents = query.value(12).toLongLong();
-    document.markupBasisPoints = query.value(13).toInt();
-    document.markupAmountCents = query.value(14).toLongLong();
-    document.priceBeforeTaxCents = query.value(15).toLongLong();
-    document.taxBasisPoints = query.value(16).toInt();
-    document.taxAmountCents = query.value(17).toLongLong();
-    document.priceWithTaxCents = query.value(18).toLongLong();
+    document.materialCostCents = query.value(14).toLongLong();
+    document.freightCents = query.value(15).toLongLong();
+    document.otherFeesCents = query.value(16).toLongLong();
+    document.markupBasisPoints = query.value(17).toInt();
+    document.markupAmountCents = query.value(18).toLongLong();
+    document.priceBeforeTaxCents = query.value(19).toLongLong();
+    document.taxBasisPoints = query.value(20).toInt();
+    document.taxAmountCents = query.value(21).toLongLong();
+    document.priceWithTaxCents = query.value(22).toLongLong();
     document.summary.priceWithTaxCents = document.priceWithTaxCents;
-    document.notes = query.value(19).toString();
-    if (!query.value(20).isNull()) {
-        document.sourceQuoteId = query.value(20).toLongLong();
+    document.notes = query.value(23).toString();
+    if (!query.value(24).isNull()) {
+        document.sourceQuoteId = query.value(24).toLongLong();
     }
-    document.createdBy = query.value(21).toLongLong();
-    document.updatedBy = query.value(22).toLongLong();
-    document.issuedAt = query.value(23).toDateTime();
-    document.voidedAt = query.value(24).toDateTime();
-    document.summary.revision = query.value(25).toInt();
-    document.summary.createdAt = query.value(26).toDateTime();
-    document.summary.updatedAt = query.value(27).toDateTime();
+    document.createdBy = query.value(25).toLongLong();
+    document.updatedBy = query.value(26).toLongLong();
+    document.issuedAt = query.value(27).toDateTime();
+    document.voidedAt = query.value(28).toDateTime();
+    document.summary.revision = query.value(29).toInt();
+    document.summary.createdAt = query.value(30).toDateTime();
+    document.summary.updatedAt = query.value(31).toDateTime();
+    if (!query.value(32).isNull()) document.summary.assignedEngineerId = query.value(32).toLongLong();
+    if (!query.value(33).isNull()) document.summary.expectedCompletionAt = query.value(33).toDateTime();
+    if (!query.value(34).isNull()) document.summary.engineerSubmittedAt = query.value(34).toDateTime();
     return document;
 }
 
@@ -470,6 +642,26 @@ QuoteResult<QuoteDocument> loadDocument(QSqlDatabase database, qint64 id) {
         item.subtotalCents = items.value(9).toLongLong();
         item.notes = items.value(10).toString();
         document.items.push_back(std::move(item));
+    }
+
+    QSqlQuery process(database);
+    process.prepare(QStringLiteral(
+        "SELECT id, line_no, step_name_snapshot, labor_minutes_snapshot "
+        "FROM quote_process_items WHERE quote_id = :quoteId ORDER BY line_no"
+    ));
+    process.bindValue(QStringLiteral(":quoteId"), idValue(id));
+    if (!process.exec()) {
+        return queryFailure<QuoteDocument>(
+            QStringLiteral("unable to read quote process steps"), process
+        );
+    }
+    while (process.next()) {
+        QuoteProcessSnapshot step;
+        step.id = process.value(0).toLongLong();
+        step.lineNo = process.value(1).toInt();
+        step.stepName = process.value(2).toString();
+        step.laborMinutes = process.value(3).toLongLong();
+        document.processSteps.push_back(std::move(step));
     }
     return QuoteResult<QuoteDocument>::success(std::move(document));
 }
@@ -596,8 +788,11 @@ QuoteResult<QuotePage> MySqlQuoteLifecycle::list(QuoteSearchQuery request) {
     QSqlQuery items(database_);
     items.prepare(QStringLiteral(
         "SELECT id, quote_number, customer_id, customer_name_snapshot, "
-        "bom_template_id, bom_quantity_micros, status, price_with_tax_cents, revision, created_at, "
-        "updated_at FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
+        "bom_template_id, bom_quantity_micros, bom_lead_days, labor_count, "
+        "process_total_minutes, estimated_delivery_days, status, "
+        "price_with_tax_cents, revision, created_at, "
+        "updated_at, assigned_engineer_id, expected_completion_at, "
+        "engineer_submitted_at FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
     ).arg(where).arg(request.pageSize).arg(offset));
     bindFilters(items);
     if (!items.exec()) {
@@ -666,14 +861,20 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::create(CreateQuoteCommand comman
     insert.prepare(QStringLiteral(
         "INSERT INTO quotes (quote_number, customer_id, customer_name_snapshot, "
         "customer_contact_snapshot, customer_phone_snapshot, "
-        "customer_address_snapshot, bom_template_id, bom_quantity_micros, status, material_cost_cents, "
+        "customer_address_snapshot, bom_template_id, bom_quantity_micros, "
+        "bom_lead_days, labor_count, process_total_minutes, "
+        "estimated_delivery_days, status, material_cost_cents, "
         "freight_cents, other_fees_cents, markup_basis_points, markup_amount_cents, "
         "price_before_tax_cents, tax_basis_points, tax_amount_cents, "
-        "price_with_tax_cents, notes, source_quote_id, created_by, updated_by) "
+        "price_with_tax_cents, notes, source_quote_id, "
+        "assigned_engineer_id, expected_completion_at, created_by, updated_by) "
         "VALUES (:temporaryNumber, :customerId, :customerName, :customerContact, "
-        ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, 'draft', :materialCost, "
+        ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, "
+        ":bomLeadDays, :laborCount, :processTotalMinutes, "
+        ":estimatedDeliveryDays, 'draft', :materialCost, "
         ":freight, :otherFees, :markupRate, :markupAmount, :beforeTax, :taxRate, "
-        ":taxAmount, :withTax, :notes, NULL, :actor, :actor)"
+        ":taxAmount, :withTax, :notes, NULL, "
+        ":assignedEngineerId, :expectedCompletionAt, :actor, :actor)"
     ));
     bindPreparedHeader(insert, *prepared.value, command.actorUserId);
     insert.bindValue(
@@ -701,6 +902,11 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::create(CreateQuoteCommand comman
     const auto lines = insertPreparedLines(database_, quoteId, prepared.value->items);
     if (!lines.ok()) {
         return failure<QuoteDocument>(lines.error, lines.message);
+    }
+    const auto processSteps =
+        insertPreparedProcessItems(database_, quoteId, prepared.value->processSteps);
+    if (!processSteps.ok()) {
+        return failure<QuoteDocument>(processSteps.error, processSteps.message);
     }
     return commitAndLoad(transaction, database_, quoteId);
 }
@@ -753,11 +959,16 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::update(UpdateQuoteCommand comman
         "customer_phone_snapshot = :customerPhone, "
         "customer_address_snapshot = :customerAddress, "
         "bom_template_id = :bomTemplateId, bom_quantity_micros = :bomQuantity, "
+        "bom_lead_days = :bomLeadDays, labor_count = :laborCount, "
+        "process_total_minutes = :processTotalMinutes, "
+        "estimated_delivery_days = :estimatedDeliveryDays, "
         "material_cost_cents = :materialCost, "
         "freight_cents = :freight, other_fees_cents = :otherFees, "
         "markup_basis_points = :markupRate, markup_amount_cents = :markupAmount, "
         "price_before_tax_cents = :beforeTax, tax_basis_points = :taxRate, "
         "tax_amount_cents = :taxAmount, price_with_tax_cents = :withTax, "
+        "assigned_engineer_id = :assignedEngineerId, "
+        "expected_completion_at = :expectedCompletionAt, "
         "notes = :notes, updated_by = :actor, revision = revision + 1 "
         "WHERE id = :id AND status = 'draft' AND revision = :revision"
     ));
@@ -787,6 +998,22 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::update(UpdateQuoteCommand comman
     const auto lines = insertPreparedLines(database_, command.id, prepared.value->items);
     if (!lines.ok()) {
         return failure<QuoteDocument>(lines.error, lines.message);
+    }
+
+    QSqlQuery removeProcess(database_);
+    removeProcess.prepare(QStringLiteral(
+        "DELETE FROM quote_process_items WHERE quote_id = :id"
+    ));
+    removeProcess.bindValue(QStringLiteral(":id"), idValue(command.id));
+    if (!removeProcess.exec()) {
+        return queryFailure<QuoteDocument>(
+            QStringLiteral("unable to replace quote process steps"), removeProcess
+        );
+    }
+    const auto processSteps =
+        insertPreparedProcessItems(database_, command.id, prepared.value->processSteps);
+    if (!processSteps.ok()) {
+        return failure<QuoteDocument>(processSteps.error, processSteps.message);
     }
     return commitAndLoad(transaction, database_, command.id);
 }
@@ -850,6 +1077,9 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::changeStatus(
     if (command.targetStatus == QuoteStatus::Issued) {
         updateQuery.prepare(QStringLiteral(
             "UPDATE quotes SET status = 'issued', issued_at = CURRENT_TIMESTAMP(6), "
+            "engineer_submitted_at = IF(assigned_engineer_id IS NOT NULL, "
+            "COALESCE(engineer_submitted_at, CURRENT_TIMESTAMP(6)), "
+            "engineer_submitted_at), "
             "voided_at = NULL, updated_by = :actor, revision = revision + 1 "
             "WHERE id = :id AND revision = :revision AND status = 'draft'"
         ));
@@ -905,14 +1135,20 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
     insert.prepare(QStringLiteral(
         "INSERT INTO quotes (quote_number, customer_id, customer_name_snapshot, "
         "customer_contact_snapshot, customer_phone_snapshot, "
-        "customer_address_snapshot, bom_template_id, bom_quantity_micros, status, material_cost_cents, "
+        "customer_address_snapshot, bom_template_id, bom_quantity_micros, "
+        "bom_lead_days, labor_count, process_total_minutes, "
+        "estimated_delivery_days, status, material_cost_cents, "
         "freight_cents, other_fees_cents, markup_basis_points, markup_amount_cents, "
         "price_before_tax_cents, tax_basis_points, tax_amount_cents, "
-        "price_with_tax_cents, notes, source_quote_id, created_by, updated_by) "
+        "price_with_tax_cents, notes, source_quote_id, "
+        "assigned_engineer_id, expected_completion_at, created_by, updated_by) "
         "VALUES (:temporaryNumber, :customerId, :customerName, :customerContact, "
-        ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, 'draft', :materialCost, "
+        ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, "
+        ":bomLeadDays, :laborCount, :processTotalMinutes, "
+        ":estimatedDeliveryDays, 'draft', :materialCost, "
         ":freight, :otherFees, :markupRate, :markupAmount, :beforeTax, :taxRate, "
-        ":taxAmount, :withTax, :notes, :sourceId, :actor, :actor)"
+        ":taxAmount, :withTax, :notes, :sourceId, "
+        ":assignedEngineerId, :expectedCompletionAt, :actor, :actor)"
     ));
     const auto& original = *source.value;
     insert.bindValue(
@@ -929,6 +1165,16 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
         optionalIdValue(original.summary.bomTemplateId)
     );
     insert.bindValue(QStringLiteral(":bomQuantity"), idValue(original.summary.bomQuantityMicros));
+    insert.bindValue(QStringLiteral(":bomLeadDays"), original.summary.bomLeadDays);
+    insert.bindValue(QStringLiteral(":laborCount"), original.summary.laborCount);
+    insert.bindValue(
+        QStringLiteral(":processTotalMinutes"),
+        idValue(original.summary.processTotalMinutes)
+    );
+    insert.bindValue(
+        QStringLiteral(":estimatedDeliveryDays"),
+        original.summary.estimatedDeliveryDays
+    );
     insert.bindValue(QStringLiteral(":materialCost"), idValue(original.materialCostCents));
     insert.bindValue(QStringLiteral(":freight"), idValue(original.freightCents));
     insert.bindValue(QStringLiteral(":otherFees"), idValue(original.otherFeesCents));
@@ -940,6 +1186,15 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
     insert.bindValue(QStringLiteral(":withTax"), idValue(original.priceWithTaxCents));
     insert.bindValue(QStringLiteral(":notes"), original.notes);
     insert.bindValue(QStringLiteral(":sourceId"), idValue(original.summary.id));
+    // 克隆的新草稿保留工程师指派与预测时间，但提交时间为空（新任务未提交）。
+    insert.bindValue(
+        QStringLiteral(":assignedEngineerId"),
+        optionalIdValue(original.summary.assignedEngineerId)
+    );
+    insert.bindValue(
+        QStringLiteral(":expectedCompletionAt"),
+        optionalDateTimeValue(original.summary.expectedCompletionAt)
+    );
     insert.bindValue(QStringLiteral(":actor"), idValue(command.actorUserId));
     if (!insert.exec()) {
         return queryFailure<QuoteDocument>(QStringLiteral("unable to clone quote"), insert);
@@ -976,6 +1231,17 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
     const auto lines = insertPreparedLines(database_, quoteId, copiedLines);
     if (!lines.ok()) {
         return failure<QuoteDocument>(lines.error, lines.message);
+    }
+
+    std::vector<PreparedProcessLine> copiedSteps;
+    copiedSteps.reserve(original.processSteps.size());
+    for (const auto& step : original.processSteps) {
+        copiedSteps.push_back({step.stepName, step.laborMinutes});
+    }
+    const auto processSteps =
+        insertPreparedProcessItems(database_, quoteId, copiedSteps);
+    if (!processSteps.ok()) {
+        return failure<QuoteDocument>(processSteps.error, processSteps.message);
     }
     return commitAndLoad(transaction, database_, quoteId);
 }

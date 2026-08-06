@@ -33,6 +33,8 @@ struct Material final {
     QString category;
     std::int64_t currentUnitPriceCents{};
     bool isEnabled{true};
+    // 电线类物料标志，按铜价定价；新增字段置于末尾以兼容聚合初始化。
+    bool isCopperBased{false};
     std::uint32_t revision{1};
     QDateTime createdAt;
     QDateTime updatedAt;
@@ -45,6 +47,55 @@ struct MaterialDraft final {
     QString unit;
     QString category;
     std::int64_t currentUnitPriceCents{};
+    bool isEnabled{true};
+    // 电线类物料标志，按铜价定价；新增字段置于末尾以兼容聚合初始化。
+    bool isCopperBased{false};
+};
+
+// 物料下的供应商分支：同一编号物料可对应多个供应商。
+struct MaterialSupplier final {
+    std::int64_t id{};
+    std::int64_t materialId{};
+    QString supplierName;
+    QString contactName;
+    QString phone;
+    bool isDefault{false};
+    bool isEnabled{true};
+    // 该供应商对当前物料的交货周期（天），用于计算 BOM 交期。
+    // 新增字段置于末尾以兼容聚合初始化。
+    int leadDays{0};
+    std::uint32_t revision{1};
+    QDateTime createdAt;
+    QDateTime updatedAt;
+};
+
+struct MaterialSupplierDraft final {
+    QString supplierName;
+    QString contactName;
+    QString phone;
+    bool isDefault{false};
+    bool isEnabled{true};
+    // 交货周期（天），新增字段置于末尾以兼容聚合初始化。
+    int leadDays{0};
+};
+
+// 供应商下的价格分支：电线类物料按铜价区分，普通物料铜价为 null。
+struct MaterialPrice final {
+    std::int64_t id{};
+    std::int64_t supplierId{};
+    std::optional<std::int64_t> copperPriceCents;
+    std::int64_t unitPriceCents{};
+    bool isDefault{false};
+    bool isEnabled{true};
+    std::uint32_t revision{1};
+    QDateTime createdAt;
+    QDateTime updatedAt;
+};
+
+struct MaterialPriceDraft final {
+    std::optional<std::int64_t> copperPriceCents;
+    std::int64_t unitPriceCents{};
+    bool isDefault{false};
     bool isEnabled{true};
 };
 

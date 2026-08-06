@@ -27,6 +27,8 @@ const QStringList kMaterialHeaders{
     QStringLiteral("类别"),
     QStringLiteral("当前单价"),
     QStringLiteral("启用"),
+    QStringLiteral("供应商名称"),
+    QStringLiteral("供货周期（天）"),
 };
 
 Format titleFormat() {
@@ -99,6 +101,8 @@ void configureMaterialColumns(Document& document) {
     document.setColumnWidth(5, 18);
     document.setColumnWidth(6, 14);
     document.setColumnWidth(7, 10);
+    document.setColumnWidth(8, 20);
+    document.setColumnWidth(9, 16);
 }
 
 void renameFirstSheet(Document& document, const QString& name) {
@@ -168,6 +172,31 @@ std::optional<bool> enabledFromCell(const QVariant& value) {
     return std::nullopt;
 }
 
+// 供货周期（天）：接受整数或带小数的数字/文本，非负且不超过 36500。
+std::optional<int> leadDaysFromCell(const QVariant& value) {
+    if (!value.isValid()) {
+        return std::nullopt;
+    }
+    bool ok = false;
+    double days = 0.0;
+    const auto type = value.metaType().id();
+    if (type == QMetaType::Double || type == QMetaType::Float ||
+        type == QMetaType::Int || type == QMetaType::UInt ||
+        type == QMetaType::LongLong || type == QMetaType::ULongLong) {
+        days = value.toDouble(&ok);
+    } else {
+        days = QLocale::c().toDouble(value.toString().trimmed(), &ok);
+    }
+    if (!ok || !std::isfinite(days) || days < 0.0 ||
+        std::abs(days - std::round(days)) > 0.000001) {
+        return std::nullopt;
+    }
+    if (days > 36'500.0) {
+        return std::nullopt;
+    }
+    return static_cast<int>(std::llround(days));
+}
+
 void appendError(
     MaterialImportResult& result,
     int row,
@@ -232,6 +261,8 @@ bool WorkbookService::exportMaterialTemplate(QIODevice* output, QString* error) 
     document.write(2, 5, QStringLiteral("示例分类"));
     document.write(2, 6, 12.34, moneyFormat());
     document.write(2, 7, QStringLiteral("是"));
+    document.write(2, 8, QStringLiteral("示例供应商"));
+    document.write(2, 9, 7);
 
     document.addSheet(QStringLiteral("填写说明"));
     writeHeaders(document, 1, {QStringLiteral("字段"), QStringLiteral("填写要求")});
@@ -243,6 +274,8 @@ bool WorkbookService::exportMaterialTemplate(QIODevice* output, QString* error) 
         {QStringLiteral("类别"), QStringLiteral("可空；最多 100 个字符")},
         {QStringLiteral("当前单价"), QStringLiteral("必填；非负数，最多两位小数")},
         {QStringLiteral("启用"), QStringLiteral("填写 是/否、true/false 或 1/0")},
+        {QStringLiteral("供应商名称"), QStringLiteral("可空；最多 200 个字符；填写后该物料的供应商分支会被创建或更新")},
+        {QStringLiteral("供货周期（天）"), QStringLiteral("可空；0-36500 的整数；该供应商对当前物料的交货周期，用于交期计算")},
     };
     int row = 2;
     for (const auto& [field, instruction] : instructions) {
@@ -362,7 +395,25 @@ MaterialImportResult WorkbookService::importMaterials(QIODevice* input) {
         } else {
             draft.isEnabled = *enabled;
         }
-        result.rows.push_back({row, std::move(draft)});
+
+        ImportedMaterialRow importedRow;
+        importedRow.sourceRow = row;
+        importedRow.material = std::move(draft);
+        importedRow.supplierName = cellText(document.read(row, 8));
+        if (importedRow.supplierName.size() > 200) {
+            appendError(result, row, QStringLiteral("supplierName"),
+                        QStringLiteral("供应商名称最多 200 个字符"));
+        }
+        if (!cellText(document.read(row, 9)).isEmpty()) {
+            const auto leadDays = leadDaysFromCell(document.read(row, 9));
+            if (!leadDays.has_value()) {
+                appendError(result, row, QStringLiteral("leadDays"),
+                            QStringLiteral("供货周期（天）应为 0-36500 的整数"));
+            } else {
+                importedRow.leadDays = *leadDays;
+            }
+        }
+        result.rows.push_back(std::move(importedRow));
     }
     if (result.rows.empty() && result.errors.empty()) {
         appendError(result, 0, QStringLiteral("rows"), QStringLiteral("没有可导入的物料行"));
@@ -424,6 +475,10 @@ bool WorkbookService::exportQuote(
     document.write(3, 2, quote.customerContact);
     document.write(3, 4, QStringLiteral("电话"), headerFormat());
     document.write(3, 5, quote.customerPhone);
+    document.write(4, 1, QStringLiteral("BOM 交期（天）"), headerFormat());
+    document.write(4, 2, quote.summary.bomLeadDays);
+    document.write(4, 4, QStringLiteral("预计发货交期（天）"), headerFormat());
+    document.write(4, 5, quote.summary.estimatedDeliveryDays);
     writeHeaders(document, 5, {
         QStringLiteral("行号"), QStringLiteral("物料编码"), QStringLiteral("物料名称"),
         QStringLiteral("规格"), QStringLiteral("单位"), QStringLiteral("数量"),
@@ -450,6 +505,24 @@ bool WorkbookService::exportQuote(
     writeMoney(document, row++, 8, quote.otherFeesCents);
     document.write(row, 7, QStringLiteral("含税报价"), headerFormat());
     writeMoney(document, row, 8, quote.priceWithTaxCents);
+    ++row;
+    document.write(row, 7, QStringLiteral("劳动人数"), headerFormat());
+    document.write(row, 8, quote.summary.laborCount);
+
+    // 工序步骤明细：展示为独立小表，直观体现"工时总和 / 人数"的来源。
+    if (!quote.processSteps.empty()) {
+        row += 2;
+        writeHeaders(document, row, {
+            QStringLiteral("行号"), QStringLiteral("工序名称"), QStringLiteral("工时（单人分钟）")
+        });
+        ++row;
+        for (const auto& step : quote.processSteps) {
+            document.write(row, 1, step.lineNo);
+            document.write(row, 2, step.stepName);
+            document.write(row, 3, step.laborMinutes);
+            ++row;
+        }
+    }
     document.setColumnWidth(1, 10);
     document.setColumnWidth(2, 18);
     document.setColumnWidth(3, 24);

@@ -5,8 +5,10 @@
 #include "manage/server/catalog_routes.h"
 #include "manage/server/http_authorization.h"
 #include "manage/server/material_batch_routes.h"
+#include "manage/server/process_step_routes.h"
 #include "manage/server/quote_routes.h"
 #include "manage/server/statistics_routes.h"
+#include "manage/server/task_routes.h"
 #include "manage/server/user_routes.h"
 
 #include "manage/data/catalog_repository.h"
@@ -262,6 +264,48 @@ ApiServer::ApiServer(
     std::shared_ptr<manage::auth::UserManagementService> userManagementService,
     manage::data::StatisticsRepository* statisticsRepository,
     manage::data::MaterialBatchService* materialBatchService
+) : ApiServer(
+        std::move(authService),
+        std::move(catalogRepository),
+        bomService,
+        quoteLifecycle,
+        std::move(userManagementService),
+        statisticsRepository,
+        materialBatchService,
+        nullptr
+    ) {}
+
+ApiServer::ApiServer(
+    std::shared_ptr<manage::auth::AuthService> authService,
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+    manage::data::BomService* bomService,
+    manage::data::QuoteLifecycle* quoteLifecycle,
+    std::shared_ptr<manage::auth::UserManagementService> userManagementService,
+    manage::data::StatisticsRepository* statisticsRepository,
+    manage::data::MaterialBatchService* materialBatchService,
+    manage::data::ProcessStepService* processStepService
+) : ApiServer(
+        std::move(authService),
+        std::move(catalogRepository),
+        bomService,
+        quoteLifecycle,
+        std::move(userManagementService),
+        statisticsRepository,
+        materialBatchService,
+        processStepService,
+        nullptr
+    ) {}
+
+ApiServer::ApiServer(
+    std::shared_ptr<manage::auth::AuthService> authService,
+    std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+    manage::data::BomService* bomService,
+    manage::data::QuoteLifecycle* quoteLifecycle,
+    std::shared_ptr<manage::auth::UserManagementService> userManagementService,
+    manage::data::StatisticsRepository* statisticsRepository,
+    manage::data::MaterialBatchService* materialBatchService,
+    manage::data::ProcessStepService* processStepService,
+    manage::data::TaskService* taskService
 ) : tcpServer_(new QTcpServer(&server_)),
     authService_(std::move(authService)) {
     server_.route(
@@ -330,6 +374,8 @@ ApiServer::ApiServer(
     UserRoutes::registerRoutes(server_, userManagementService, authService_);
     StatisticsRoutes::registerRoutes(server_, statisticsRepository, authService_);
     MaterialBatchRoutes::registerRoutes(server_, materialBatchService, authService_);
+    ProcessStepRoutes::registerRoutes(server_, processStepService, authService_);
+    TaskRoutes::registerRoutes(server_, taskService, authService_);
 }
 
 quint16 ApiServer::listen(const QHostAddress& address, quint16 port) {

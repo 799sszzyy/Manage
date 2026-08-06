@@ -228,7 +228,7 @@ void ExcelToolsWidget::submitMaterialImport(const QString& path, bool validateOn
     QJsonArray rows;
     for (const auto& imported : parsed.rows) {
         const auto& material = imported.material;
-        rows.append(QJsonObject{
+        QJsonObject row{
             {QStringLiteral("sourceRow"), imported.sourceRow},
             {QStringLiteral("code"), material.code},
             {QStringLiteral("name"), material.name},
@@ -237,7 +237,12 @@ void ExcelToolsWidget::submitMaterialImport(const QString& path, bool validateOn
             {QStringLiteral("category"), material.category},
             {QStringLiteral("currentUnitPriceCents"), material.currentUnitPriceCents},
             {QStringLiteral("isEnabled"), material.isEnabled},
-        });
+        };
+        if (!imported.supplierName.isEmpty()) {
+            row.insert(QStringLiteral("supplierName"), imported.supplierName);
+            row.insert(QStringLiteral("leadDays"), imported.leadDays);
+        }
+        rows.append(row);
     }
     setBusy(true, validateOnly ? QStringLiteral("正在向服务器校验整批物料……")
                                : QStringLiteral("正在用一笔事务导入整批物料……"));

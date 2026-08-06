@@ -35,7 +35,7 @@ void builtInCatalogContainsThePublishedSchemas() {
     );
 
     require(error.isEmpty(), error.toStdString());
-    require(migrations.size() == 3, "three built-in migrations expected");
+    require(migrations.size() == 5, "five built-in migrations expected");
     const auto& migration = migrations.at(0);
     require(migration.version == 1, "initial migration version");
     require(

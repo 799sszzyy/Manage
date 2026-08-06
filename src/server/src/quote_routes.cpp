@@ -110,6 +110,10 @@ QJsonObject summaryJson(const manage::data::QuoteSummary& summary) {
         {QStringLiteral("customerName"), summary.customerName},
         {QStringLiteral("bomTemplateId"), optionalIdJson(summary.bomTemplateId)},
         {QStringLiteral("bomQuantityMicros"), summary.bomQuantityMicros},
+        {QStringLiteral("bomLeadDays"), summary.bomLeadDays},
+        {QStringLiteral("laborCount"), summary.laborCount},
+        {QStringLiteral("processTotalMinutes"), summary.processTotalMinutes},
+        {QStringLiteral("estimatedDeliveryDays"), summary.estimatedDeliveryDays},
         {
             QStringLiteral("status"),
             manage::data::quoteStatusCode(summary.status)
@@ -118,6 +122,9 @@ QJsonObject summaryJson(const manage::data::QuoteSummary& summary) {
         {QStringLiteral("revision"), summary.revision},
         {QStringLiteral("createdAt"), dateTimeJson(summary.createdAt)},
         {QStringLiteral("updatedAt"), dateTimeJson(summary.updatedAt)},
+        {QStringLiteral("assignedEngineerId"), optionalIdJson(summary.assignedEngineerId)},
+        {QStringLiteral("expectedCompletionAt"), dateTimeJson(summary.expectedCompletionAt.value_or(QDateTime{}))},
+        {QStringLiteral("engineerSubmittedAt"), dateTimeJson(summary.engineerSubmittedAt.value_or(QDateTime{}))},
     };
 }
 
@@ -171,6 +178,17 @@ QJsonObject documentJson(const manage::data::QuoteDocument& document) {
         });
     }
     object.insert(QStringLiteral("items"), items);
+
+    QJsonArray processSteps;
+    for (const auto& step : document.processSteps) {
+        processSteps.append(QJsonObject{
+            {QStringLiteral("id"), step.id},
+            {QStringLiteral("lineNo"), step.lineNo},
+            {QStringLiteral("stepName"), step.stepName},
+            {QStringLiteral("laborMinutes"), step.laborMinutes},
+        });
+    }
+    object.insert(QStringLiteral("processSteps"), processSteps);
     return object;
 }
 
@@ -295,6 +313,42 @@ bool readDraft(
         draft.bomTemplateId.reset();
     }
 
+    // 工程师责任制：指派工程师账号（可空，NULL 表示尚未指派）。
+    if (object.contains(QStringLiteral("engineerId")) &&
+        !object.value(QStringLiteral("engineerId")).isNull()) {
+        qint64 engineerId = 0;
+        if (!readInteger(
+                object,
+                QStringLiteral("engineerId"),
+                engineerId,
+                true
+            )) {
+            message = QStringLiteral("engineerId must be null or a safe integer");
+            return false;
+        }
+        draft.assignedEngineerId = engineerId;
+    } else {
+        draft.assignedEngineerId.reset();
+    }
+
+    // 工程师责任制：销售预测的 BOM 构建完成时间（可空 ISO 8601 时间串）。
+    const auto expectedValue = object.value(QStringLiteral("expectedCompletionAt"));
+    if (expectedValue.isUndefined() || expectedValue.isNull()) {
+        draft.expectedCompletionAt.reset();
+    } else if (!expectedValue.isString()) {
+        message = QStringLiteral("expectedCompletionAt must be null or an ISO timestamp string");
+        return false;
+    } else {
+        const auto parsed = QDateTime::fromString(
+            expectedValue.toString(), Qt::ISODateWithMs
+        );
+        if (!parsed.isValid()) {
+            message = QStringLiteral("expectedCompletionAt must use ISO 8601 format");
+            return false;
+        }
+        draft.expectedCompletionAt = parsed;
+    }
+
     if (!readInteger(
             object,
             QStringLiteral("bomQuantityMicros"),
@@ -304,6 +358,49 @@ bool readDraft(
         )) {
         message = QStringLiteral("bomQuantityMicros must be a safe integer");
         return false;
+    }
+
+    if (!readInt(object, QStringLiteral("laborCount"), draft.laborCount, false)) {
+        message = QStringLiteral("laborCount must be a safe integer");
+        return false;
+    }
+    if (draft.laborCount < 1) {
+        draft.laborCount = 1;
+    }
+
+    const auto processValue = object.value(QStringLiteral("processSteps"));
+    if (processValue.isUndefined() || processValue.isNull()) {
+        // 未提交工序步骤时视为空列表，兼容旧客户端与既有测试。
+        draft.processSteps.clear();
+    } else if (!processValue.isArray()) {
+        message = QStringLiteral("processSteps must be an array");
+        return false;
+    } else {
+        const auto process = processValue.toArray();
+        draft.processSteps.clear();
+        draft.processSteps.reserve(static_cast<std::size_t>(process.size()));
+        for (qsizetype index = 0; index < process.size(); ++index) {
+            if (!process.at(index).isObject()) {
+                message = QStringLiteral("processSteps[%1] must be an object").arg(index);
+                return false;
+            }
+            const auto step = process.at(index).toObject();
+            manage::data::QuoteProcessInput input;
+            if (!readString(step, QStringLiteral("stepName"), input.stepName, true) ||
+                !readInteger(
+                    step,
+                    QStringLiteral("laborMinutes"),
+                    input.laborMinutes,
+                    false,
+                    0
+                )) {
+                message = QStringLiteral(
+                    "processSteps[%1] stepName must be a string and laborMinutes a safe integer"
+                ).arg(index);
+                return false;
+            }
+            draft.processSteps.push_back(std::move(input));
+        }
     }
 
     if (!readInteger(

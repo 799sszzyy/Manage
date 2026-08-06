@@ -5,11 +5,13 @@
 #include <QWidget>
 
 class QComboBox;
+class QDateEdit;
 class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QSpinBox;
 class QTableWidget;
 class QTextEdit;
 
@@ -44,6 +46,11 @@ private:
     void loadCustomers();
     void loadBoms();
     void loadMaterials();
+    void loadProcessSteps();
+    // 工程师责任制：加载可指派的工程师账号候选。
+    void loadEngineers();
+    void addProcessStep();
+    void removeProcessStep();
     void loadSelectedBom(bool forceReload = false);
     void loadNextBomMaterial();
     void addMaterialRow(const QJsonObject& material, qint64 quantityMicros, const QString& notes);
@@ -102,8 +109,20 @@ private:
     QLabel* stateLabel_{};
     QLabel* revisionLabel_{};
     QComboBox* customerCombo_{};
+    // 工程师责任制：负责工程师下拉与销售预测的 BOM 构建完成日期。
+    QComboBox* engineerCombo_{};
+    QDateEdit* expectedDateEdit_{};
     QComboBox* bomCombo_{};
     QDoubleSpinBox* bomQuantitySpin_{};
+    QLabel* bomLeadDaysLabel_{};
+    QSpinBox* laborCountSpin_{};
+    QLabel* processTotalLabel_{};
+    QLabel* estimatedDeliveryLabel_{};
+    QComboBox* processCombo_{};
+    QPushButton* addProcessButton_{};
+    QPushButton* removeProcessButton_{};
+    QTableWidget* processTable_{};
+    QJsonArray processLibrary_;
     QLineEdit* materialSearchEdit_{};
     QPushButton* materialSearchButton_{};
     QComboBox* materialCombo_{};

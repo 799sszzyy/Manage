@@ -113,6 +113,58 @@ std::optional<CatalogError> CatalogService::validateMaterial(MaterialDraft* draf
     return std::nullopt;
 }
 
+std::optional<CatalogError> CatalogService::validateMaterialSupplier(
+    MaterialSupplierDraft* draft
+) {
+    draft->supplierName = draft->supplierName.trimmed();
+    draft->contactName = trimmedOrEmpty(draft->contactName);
+    draft->phone = trimmedOrEmpty(draft->phone);
+
+    if (draft->supplierName.isEmpty() || draft->supplierName.size() > 200) {
+        return validationError(
+            QStringLiteral("supplierName"),
+            QStringLiteral("supplierName must contain 1-200 characters")
+        );
+    }
+    if (draft->contactName.size() > 100) {
+        return validationError(
+            QStringLiteral("contactName"),
+            QStringLiteral("contactName must not exceed 100 characters")
+        );
+    }
+    if (draft->phone.size() > 64) {
+        return validationError(
+            QStringLiteral("phone"),
+            QStringLiteral("phone must not exceed 64 characters")
+        );
+    }
+    if (draft->leadDays < 0 || draft->leadDays > 36'500) {
+        return validationError(
+            QStringLiteral("leadDays"),
+            QStringLiteral("leadDays must be between 0 and 36500 days")
+        );
+    }
+    return std::nullopt;
+}
+
+std::optional<CatalogError> CatalogService::validateMaterialPrice(
+    MaterialPriceDraft* draft
+) {
+    if (draft->copperPriceCents.has_value() && *draft->copperPriceCents < 0) {
+        return validationError(
+            QStringLiteral("copperPriceCents"),
+            QStringLiteral("copperPriceCents must not be negative")
+        );
+    }
+    if (draft->unitPriceCents < 0) {
+        return validationError(
+            QStringLiteral("unitPriceCents"),
+            QStringLiteral("unitPriceCents must not be negative")
+        );
+    }
+    return std::nullopt;
+}
+
 std::optional<CatalogError> CatalogService::validateCustomer(CustomerDraft* draft) {
     draft->name = draft->name.trimmed();
     draft->contactName = trimmedOrEmpty(draft->contactName);
@@ -344,6 +396,248 @@ CatalogResult<Customer> CatalogService::updateCustomer(
         return failed<Customer>(mapRepositoryError(repositoryError));
     }
     return succeeded(std::move(customer));
+}
+
+CatalogResult<Page<MaterialSupplier>> CatalogService::listMaterialSuppliers(
+    std::int64_t materialId,
+    PageQuery query
+) const {
+    if (materialId <= 0) {
+        return failed<Page<MaterialSupplier>>(validationError(
+            QStringLiteral("materialId"),
+            QStringLiteral("materialId must be a positive integer")
+        ));
+    }
+    if (const auto error = validatePage(&query); error.has_value()) {
+        return failed<Page<MaterialSupplier>>(*error);
+    }
+    Page<MaterialSupplier> page;
+    RepositoryError repositoryError;
+    if (!repository_->listMaterialSuppliers(
+            materialId,
+            query,
+            &page,
+            &repositoryError
+        )) {
+        return failed<Page<MaterialSupplier>>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(page));
+}
+
+CatalogResult<MaterialSupplier> CatalogService::getMaterialSupplier(
+    std::int64_t id
+) const {
+    if (id <= 0) {
+        return failed<MaterialSupplier>(validationError(
+            QStringLiteral("id"),
+            QStringLiteral("id must be a positive integer")
+        ));
+    }
+    MaterialSupplier supplier;
+    RepositoryError repositoryError;
+    if (!repository_->findMaterialSupplier(id, &supplier, &repositoryError)) {
+        return failed<MaterialSupplier>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(supplier));
+}
+
+CatalogResult<MaterialSupplier> CatalogService::createMaterialSupplier(
+    std::int64_t materialId,
+    MaterialSupplierDraft draft
+) const {
+    if (materialId <= 0) {
+        return failed<MaterialSupplier>(validationError(
+            QStringLiteral("materialId"),
+            QStringLiteral("materialId must be a positive integer")
+        ));
+    }
+    if (const auto error = validateMaterialSupplier(&draft); error.has_value()) {
+        return failed<MaterialSupplier>(*error);
+    }
+    MaterialSupplier supplier;
+    RepositoryError repositoryError;
+    if (!repository_->createMaterialSupplier(
+            materialId,
+            draft,
+            &supplier,
+            &repositoryError
+        )) {
+        return failed<MaterialSupplier>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(supplier));
+}
+
+CatalogResult<MaterialSupplier> CatalogService::updateMaterialSupplier(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    MaterialSupplierDraft draft
+) const {
+    if (id <= 0 || expectedRevision == 0) {
+        return failed<MaterialSupplier>(validationError(
+            id <= 0 ? QStringLiteral("id") : QStringLiteral("revision"),
+            QStringLiteral("id and revision must be positive integers")
+        ));
+    }
+    if (const auto error = validateMaterialSupplier(&draft); error.has_value()) {
+        return failed<MaterialSupplier>(*error);
+    }
+    MaterialSupplier supplier;
+    RepositoryError repositoryError;
+    if (!repository_->updateMaterialSupplier(
+            id,
+            expectedRevision,
+            draft,
+            &supplier,
+            &repositoryError
+        )) {
+        return failed<MaterialSupplier>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(supplier));
+}
+
+CatalogResult<MaterialSupplier> CatalogService::setMaterialSupplierEnabled(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    bool enabled
+) const {
+    if (id <= 0 || expectedRevision == 0) {
+        return failed<MaterialSupplier>(validationError(
+            id <= 0 ? QStringLiteral("id") : QStringLiteral("revision"),
+            QStringLiteral("id and revision must be positive integers")
+        ));
+    }
+    MaterialSupplier supplier;
+    RepositoryError repositoryError;
+    if (!repository_->setMaterialSupplierEnabled(
+            id,
+            expectedRevision,
+            enabled,
+            &supplier,
+            &repositoryError
+        )) {
+        return failed<MaterialSupplier>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(supplier));
+}
+
+CatalogResult<Page<MaterialPrice>> CatalogService::listMaterialPrices(
+    std::int64_t supplierId,
+    PageQuery query
+) const {
+    if (supplierId <= 0) {
+        return failed<Page<MaterialPrice>>(validationError(
+            QStringLiteral("supplierId"),
+            QStringLiteral("supplierId must be a positive integer")
+        ));
+    }
+    if (const auto error = validatePage(&query); error.has_value()) {
+        return failed<Page<MaterialPrice>>(*error);
+    }
+    Page<MaterialPrice> page;
+    RepositoryError repositoryError;
+    if (!repository_->listMaterialPrices(
+            supplierId,
+            query,
+            &page,
+            &repositoryError
+        )) {
+        return failed<Page<MaterialPrice>>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(page));
+}
+
+CatalogResult<MaterialPrice> CatalogService::getMaterialPrice(std::int64_t id) const {
+    if (id <= 0) {
+        return failed<MaterialPrice>(validationError(
+            QStringLiteral("id"),
+            QStringLiteral("id must be a positive integer")
+        ));
+    }
+    MaterialPrice price;
+    RepositoryError repositoryError;
+    if (!repository_->findMaterialPrice(id, &price, &repositoryError)) {
+        return failed<MaterialPrice>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(price));
+}
+
+CatalogResult<MaterialPrice> CatalogService::createMaterialPrice(
+    std::int64_t supplierId,
+    MaterialPriceDraft draft
+) const {
+    if (supplierId <= 0) {
+        return failed<MaterialPrice>(validationError(
+            QStringLiteral("supplierId"),
+            QStringLiteral("supplierId must be a positive integer")
+        ));
+    }
+    if (const auto error = validateMaterialPrice(&draft); error.has_value()) {
+        return failed<MaterialPrice>(*error);
+    }
+    MaterialPrice price;
+    RepositoryError repositoryError;
+    if (!repository_->createMaterialPrice(
+            supplierId,
+            draft,
+            &price,
+            &repositoryError
+        )) {
+        return failed<MaterialPrice>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(price));
+}
+
+CatalogResult<MaterialPrice> CatalogService::updateMaterialPrice(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    MaterialPriceDraft draft
+) const {
+    if (id <= 0 || expectedRevision == 0) {
+        return failed<MaterialPrice>(validationError(
+            id <= 0 ? QStringLiteral("id") : QStringLiteral("revision"),
+            QStringLiteral("id and revision must be positive integers")
+        ));
+    }
+    if (const auto error = validateMaterialPrice(&draft); error.has_value()) {
+        return failed<MaterialPrice>(*error);
+    }
+    MaterialPrice price;
+    RepositoryError repositoryError;
+    if (!repository_->updateMaterialPrice(
+            id,
+            expectedRevision,
+            draft,
+            &price,
+            &repositoryError
+        )) {
+        return failed<MaterialPrice>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(price));
+}
+
+CatalogResult<MaterialPrice> CatalogService::setMaterialPriceEnabled(
+    std::int64_t id,
+    std::uint32_t expectedRevision,
+    bool enabled
+) const {
+    if (id <= 0 || expectedRevision == 0) {
+        return failed<MaterialPrice>(validationError(
+            id <= 0 ? QStringLiteral("id") : QStringLiteral("revision"),
+            QStringLiteral("id and revision must be positive integers")
+        ));
+    }
+    MaterialPrice price;
+    RepositoryError repositoryError;
+    if (!repository_->setMaterialPriceEnabled(
+            id,
+            expectedRevision,
+            enabled,
+            &price,
+            &repositoryError
+        )) {
+        return failed<MaterialPrice>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(price));
 }
 
 } // namespace manage::data

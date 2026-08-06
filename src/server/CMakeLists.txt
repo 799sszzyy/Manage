@@ -4,7 +4,9 @@ add_library(manage_server_lib STATIC
     src/catalog_routes.cpp
     src/http_authorization.cpp
     src/material_batch_routes.cpp
+    src/process_step_routes.cpp
     src/quote_routes.cpp
+    src/task_routes.cpp
     src/user_routes.cpp
     src/statistics_routes.cpp
 )

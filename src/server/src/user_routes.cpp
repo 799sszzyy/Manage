@@ -176,6 +176,37 @@ void UserRoutes::registerRoutes(
             });
         });
 
+    // 工程师责任制：可指派的工程师账号候选（启用且非只读用户）。
+    // 管理员与报价员（销售）均可读取，用于报价编辑时选择负责工程师。
+    server.route(QStringLiteral("/api/v1/users/engineers"),
+        QHttpServerRequest::Method::Get,
+        [service, authService](const QHttpServerRequest& request) {
+            auto failure = HttpAuthorization::require(
+                request,
+                authService,
+                {manage::auth::UserRole::Admin, manage::auth::UserRole::Quoter}
+            );
+            if (failure.has_value()) return std::move(*failure);
+            if (!service) return unavailable();
+            const auto result = service->listUsers({QString(), 1, 200});
+            if (!result.ok()) return serviceError(result);
+            QJsonArray items;
+            for (const auto& user : result.page.items) {
+                if (!user.enabled || user.role == manage::auth::UserRole::Viewer) {
+                    continue;
+                }
+                items.append(QJsonObject{
+                    {QStringLiteral("id"), static_cast<qint64>(user.id)},
+                    {QStringLiteral("username"), user.username},
+                    {QStringLiteral("displayName"), user.displayName},
+                    {QStringLiteral("role"), manage::auth::roleCode(user.role)},
+                });
+            }
+            return QHttpServerResponse(QJsonObject{
+                {QStringLiteral("items"), items},
+            });
+        });
+
     server.route(QStringLiteral("/api/v1/users"), QHttpServerRequest::Method::Post,
         [service, authService](const QHttpServerRequest& request) {
             auto actor = authorizeAdmin(request, authService);

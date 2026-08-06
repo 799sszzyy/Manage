@@ -21,6 +21,8 @@ class CatalogService;
 class QuoteLifecycle;
 class StatisticsRepository;
 class MaterialBatchService;
+class ProcessStepService;
+class TaskService;
 }
 
 namespace manage::server {
@@ -70,6 +72,27 @@ public:
         std::shared_ptr<manage::auth::UserManagementService> userManagementService,
         manage::data::StatisticsRepository* statisticsRepository,
         manage::data::MaterialBatchService* materialBatchService
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService,
+        manage::data::QuoteLifecycle* quoteLifecycle,
+        std::shared_ptr<manage::auth::UserManagementService> userManagementService,
+        manage::data::StatisticsRepository* statisticsRepository,
+        manage::data::MaterialBatchService* materialBatchService,
+        manage::data::ProcessStepService* processStepService
+    );
+    ApiServer(
+        std::shared_ptr<manage::auth::AuthService> authService,
+        std::shared_ptr<manage::data::CatalogRepository> catalogRepository,
+        manage::data::BomService* bomService,
+        manage::data::QuoteLifecycle* quoteLifecycle,
+        std::shared_ptr<manage::auth::UserManagementService> userManagementService,
+        manage::data::StatisticsRepository* statisticsRepository,
+        manage::data::MaterialBatchService* materialBatchService,
+        manage::data::ProcessStepService* processStepService,
+        manage::data::TaskService* taskService
     );
 
     quint16 listen(

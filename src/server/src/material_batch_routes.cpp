@@ -123,7 +123,28 @@ QHttpServerResponse importMaterials(
         draft.category = item.value(QStringLiteral("category")).toString();
         draft.currentUnitPriceCents = price;
         draft.isEnabled = item.value(QStringLiteral("isEnabled")).toBool();
-        rows.push_back({static_cast<int>(sourceRow), std::move(draft)});
+
+        manage::data::MaterialBatchRow batchRow;
+        batchRow.sourceRow = static_cast<int>(sourceRow);
+        batchRow.material = std::move(draft);
+        if (item.contains(QStringLiteral("supplierName"))) {
+            if (!item.value(QStringLiteral("supplierName")).isString()) {
+                return errorResponse(QStringLiteral("invalid_request"),
+                                     QStringLiteral("第 %1 项 supplierName 必须是字符串").arg(index + 1));
+            }
+            batchRow.supplierName =
+                item.value(QStringLiteral("supplierName")).toString().trimmed();
+        }
+        if (item.contains(QStringLiteral("leadDays"))) {
+            qint64 leadDays = 0;
+            if (!safeInteger(item.value(QStringLiteral("leadDays")), leadDays) ||
+                leadDays < 0 || leadDays > 36'500) {
+                return errorResponse(QStringLiteral("invalid_request"),
+                                     QStringLiteral("第 %1 项 leadDays 必须是 0-36500 的整数").arg(index + 1));
+            }
+            batchRow.leadDays = static_cast<int>(leadDays);
+        }
+        rows.push_back(std::move(batchRow));
     }
 
     const auto validateOnly = object.value(QStringLiteral("validateOnly")).toBool(true);
