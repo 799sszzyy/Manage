@@ -5,6 +5,7 @@
 #include "manage/desktop/process_step_widget.h"
 #include "manage/desktop/quote_management_widget.h"
 #include "manage/desktop/statistics_widget.h"
+#include "manage/desktop/task_dispatch_widget.h"
 #include "manage/desktop/user_management_widget.h"
 
 #include <QApplication>
@@ -62,6 +63,10 @@ int main(int argc, char* argv[]) {
     window.addModuleTab(
         QStringLiteral("BOM 与报价"),
         new manage::desktop::BomQuoteWidget(window.apiClient())
+    );
+    window.addModuleTab(
+        QStringLiteral("任务派发"),
+        new manage::desktop::TaskDispatchWidget(window.apiClient())
     );
     window.addModuleTab(
         QStringLiteral("报价管理"),
