@@ -110,6 +110,10 @@ QJsonObject summaryJson(const manage::data::QuoteSummary& summary) {
         {QStringLiteral("customerName"), summary.customerName},
         {QStringLiteral("bomTemplateId"), optionalIdJson(summary.bomTemplateId)},
         {QStringLiteral("bomQuantityMicros"), summary.bomQuantityMicros},
+        {QStringLiteral("bomLeadDays"), summary.bomLeadDays},
+        {QStringLiteral("laborCount"), summary.laborCount},
+        {QStringLiteral("processTotalMinutes"), summary.processTotalMinutes},
+        {QStringLiteral("estimatedDeliveryDays"), summary.estimatedDeliveryDays},
         {
             QStringLiteral("status"),
             manage::data::quoteStatusCode(summary.status)
@@ -171,6 +175,17 @@ QJsonObject documentJson(const manage::data::QuoteDocument& document) {
         });
     }
     object.insert(QStringLiteral("items"), items);
+
+    QJsonArray processSteps;
+    for (const auto& step : document.processSteps) {
+        processSteps.append(QJsonObject{
+            {QStringLiteral("id"), step.id},
+            {QStringLiteral("lineNo"), step.lineNo},
+            {QStringLiteral("stepName"), step.stepName},
+            {QStringLiteral("laborMinutes"), step.laborMinutes},
+        });
+    }
+    object.insert(QStringLiteral("processSteps"), processSteps);
     return object;
 }
 
@@ -304,6 +319,45 @@ bool readDraft(
         )) {
         message = QStringLiteral("bomQuantityMicros must be a safe integer");
         return false;
+    }
+
+    if (!readInt(object, QStringLiteral("laborCount"), draft.laborCount, false)) {
+        message = QStringLiteral("laborCount must be a safe integer");
+        return false;
+    }
+    if (draft.laborCount < 1) {
+        draft.laborCount = 1;
+    }
+
+    const auto processValue = object.value(QStringLiteral("processSteps"));
+    if (!processValue.isArray()) {
+        message = QStringLiteral("processSteps must be an array");
+        return false;
+    }
+    const auto process = processValue.toArray();
+    draft.processSteps.clear();
+    draft.processSteps.reserve(static_cast<std::size_t>(process.size()));
+    for (qsizetype index = 0; index < process.size(); ++index) {
+        if (!process.at(index).isObject()) {
+            message = QStringLiteral("processSteps[%1] must be an object").arg(index);
+            return false;
+        }
+        const auto step = process.at(index).toObject();
+        manage::data::QuoteProcessInput input;
+        if (!readString(step, QStringLiteral("stepName"), input.stepName, true) ||
+            !readInteger(
+                step,
+                QStringLiteral("laborMinutes"),
+                input.laborMinutes,
+                false,
+                0
+            )) {
+            message = QStringLiteral(
+                "processSteps[%1] stepName must be a string and laborMinutes a safe integer"
+            ).arg(index);
+            return false;
+        }
+        draft.processSteps.push_back(std::move(input));
     }
 
     if (!readInteger(

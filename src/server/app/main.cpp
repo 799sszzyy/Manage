@@ -10,6 +10,8 @@
 #include "manage/data/mysql_quote_lifecycle.h"
 #include "manage/data/mysql_statistics_repository.h"
 #include "manage/data/mysql_user_repository.h"
+#include "manage/data/process_step_repository.h"
+#include "manage/data/process_step_service.h"
 #include "manage/server/api_server.h"
 
 #include <QCommandLineOption>
@@ -174,6 +176,8 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<manage::data::MySqlQuoteLifecycle> quoteLifecycle;
     std::unique_ptr<manage::data::MySqlStatisticsRepository> statisticsRepository;
     std::unique_ptr<manage::data::MaterialBatchService> materialBatchService;
+    std::unique_ptr<manage::data::MySqlProcessStepRepository> processStepRepository;
+    std::unique_ptr<manage::data::ProcessStepService> processStepService;
     if (!parser.isSet(smokeTestOption)) {
         // Composition root: every business service below shares this one open
         // database connection. HTTP routes never open ad-hoc connections.
@@ -259,6 +263,14 @@ int main(int argc, char* argv[]) {
             std::make_unique<manage::data::MaterialBatchService>(
                 databaseConnection->database()
             );
+        processStepRepository =
+            std::make_unique<manage::data::MySqlProcessStepRepository>(
+                databaseConnection->database()
+            );
+        processStepService =
+            std::make_unique<manage::data::ProcessStepService>(
+                std::move(processStepRepository)
+            );
     }
 
     manage::server::ApiServer server(
@@ -268,7 +280,8 @@ int main(int argc, char* argv[]) {
         quoteLifecycle.get(),
         std::move(userManagementService),
         statisticsRepository.get(),
-        materialBatchService.get()
+        materialBatchService.get(),
+        processStepService.get()
     );
     const auto requestedPort = parser.isSet(smokeTestOption)
                                    ? static_cast<quint16>(0)

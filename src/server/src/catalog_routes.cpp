@@ -245,6 +245,7 @@ QJsonObject materialSupplierJson(const manage::data::MaterialSupplier& supplier)
         {QStringLiteral("phone"), supplier.phone},
         {QStringLiteral("isDefault"), supplier.isDefault},
         {QStringLiteral("isEnabled"), supplier.isEnabled},
+        {QStringLiteral("leadDays"), supplier.leadDays},
         {QStringLiteral("revision"), static_cast<qint64>(supplier.revision)},
         {QStringLiteral("createdAt"), supplier.createdAt.toUTC().toString(Qt::ISODateWithMs)},
         {QStringLiteral("updatedAt"), supplier.updatedAt.toUTC().toString(Qt::ISODateWithMs)},
@@ -339,6 +340,15 @@ std::optional<manage::data::MaterialSupplierDraft> materialSupplierDraft(
         );
         return std::nullopt;
     }
+    qint64 leadDays = 0;
+    if (!readInteger(object, QStringLiteral("leadDays"), &leadDays, false, 0) ||
+        leadDays > std::numeric_limits<int>::max()) {
+        *failure = invalidJsonResponse(
+            QStringLiteral("leadDays must be a non-negative safe integer")
+        );
+        return std::nullopt;
+    }
+    draft.leadDays = static_cast<int>(leadDays);
     return draft;
 }
 
