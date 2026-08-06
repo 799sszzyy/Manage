@@ -51,6 +51,8 @@ struct QuoteLineInput final {
 struct QuoteDraft final {
     qint64 customerId{};
     std::optional<qint64> bomTemplateId;
+    // Fixed-point BOM sales quantity: 1'000'000 means one BOM.
+    qint64 bomQuantityMicros{1'000'000};
     qint64 freightCents{};
     qint64 otherFeesCents{};
     int markupBasisPoints{};
@@ -79,6 +81,7 @@ struct QuoteSummary final {
     qint64 customerId{};
     QString customerName;
     std::optional<qint64> bomTemplateId;
+    qint64 bomQuantityMicros{1'000'000};
     QuoteStatus status{QuoteStatus::Draft};
     qint64 priceWithTaxCents{};
     int revision{1};

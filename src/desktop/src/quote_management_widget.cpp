@@ -99,6 +99,19 @@ std::optional<qint64> scaledDecimal(QString text, int places, bool positive) {
     return result;
 }
 
+std::optional<qint64> multiplyQuantity(qint64 quantityMicros, qint64 bomQuantityMicros) {
+    if (quantityMicros <= 0 || bomQuantityMicros <= 0) {
+        return std::nullopt;
+    }
+    const auto scaled = static_cast<long double>(quantityMicros) *
+                        static_cast<long double>(bomQuantityMicros) / 1'000'000.0L;
+    if (!std::isfinite(scaled) ||
+        scaled > static_cast<long double>(std::numeric_limits<qint64>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<qint64>(std::llround(scaled));
+}
+
 QString stateText(const QString& state) {
     if (state == QStringLiteral("draft")) return QStringLiteral("草稿");
     if (state == QStringLiteral("issued")) return QStringLiteral("已发布");
@@ -196,11 +209,18 @@ void QuoteManagementWidget::buildUi() {
     customerCombo_ = named(new QComboBox(editorGroup_), "quoteCustomerCombo");
     bomCombo_ = named(new QComboBox(editorGroup_), "quoteBomCombo");
     bomCombo_->addItem(QStringLiteral("不关联 BOM"), qint64{});
+    bomQuantitySpin_ = named(new QDoubleSpinBox(editorGroup_), "quoteBomQuantitySpin");
+    bomQuantitySpin_->setDecimals(6);
+    bomQuantitySpin_->setRange(0.000001, 999'999.999999);
+    bomQuantitySpin_->setSingleStep(1.0);
+    bomQuantitySpin_->setValue(1.0);
+    bomQuantitySpin_->setSuffix(QStringLiteral(" 个"));
     form->addRow(QStringLiteral("报价编号"), numberLabel_);
     form->addRow(QStringLiteral("状态"), stateLabel_);
     form->addRow(QStringLiteral("版本"), revisionLabel_);
     form->addRow(QStringLiteral("客户"), customerCombo_);
     form->addRow(QStringLiteral("关联 BOM（报价基础）"), bomCombo_);
+    form->addRow(QStringLiteral("BOM 销售数量"), bomQuantitySpin_);
     editor->addLayout(form);
 
     auto* itemActions = new QHBoxLayout;
@@ -292,6 +312,12 @@ void QuoteManagementWidget::connectUi() {
     connect(materialSearchEdit_, &QLineEdit::returnPressed, this, &QuoteManagementWidget::loadMaterials);
     connect(bomCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { loadSelectedBom(); });
+    connect(bomQuantitySpin_, &QDoubleSpinBox::editingFinished, this, [this] {
+        if (!editing_ || busy_ || loadingBom_ || bomCombo_->currentData(kIdRole).toLongLong() <= 0) {
+            return;
+        }
+        loadSelectedBom(true);
+    });
     connect(removeItemButton_, &QPushButton::clicked, this, &QuoteManagementWidget::removeItem);
     connect(saveButton_, &QPushButton::clicked, this, &QuoteManagementWidget::saveQuote);
     connect(cancelButton_, &QPushButton::clicked, this, [this] { editing_ = false; updateControls(); });
@@ -355,7 +381,7 @@ void QuoteManagementWidget::updateControls() {
     const auto editable = write && editing_ && currentStatus_ == QStringLiteral("draft") &&
                           !busy_ && !loadingBom_;
     const QList<QWidget*> editorFields{
-        customerCombo_, bomCombo_, materialSearchEdit_, materialSearchButton_, materialCombo_, addItemButton_, removeItemButton_,
+        customerCombo_, bomCombo_, bomQuantitySpin_, materialSearchEdit_, materialSearchButton_, materialCombo_, addItemButton_, removeItemButton_,
         freightSpin_, otherFeesSpin_, markupSpin_, taxSpin_, notesEdit_,
     };
     for (auto* field : editorFields) {
@@ -518,27 +544,31 @@ void QuoteManagementWidget::loadMaterials() {
         });
 }
 
-void QuoteManagementWidget::loadSelectedBom() {
+void QuoteManagementWidget::loadSelectedBom(bool forceReload) {
     if (!editing_ || !sessionReady() || busy_ || loadingBom_) {
         return;
     }
 
     const auto selectedId = bomCombo_->currentData(kIdRole).toLongLong();
-    if (selectedId == loadedBomId_) {
+    const auto selectedQuantityMicros = qRound64(bomQuantitySpin_->value() * 1'000'000.0);
+    if (!forceReload && selectedId == loadedBomId_ &&
+        selectedQuantityMicros == loadedBomQuantityMicros_) {
         return;
     }
     const auto previousId = loadedBomId_;
+    const auto previousQuantityMicros = loadedBomQuantityMicros_;
     if (selectedId > 0 && itemsTable_->rowCount() > 0) {
         const auto answer = QMessageBox::question(
             this,
             QStringLiteral("重新加载 BOM 明细"),
-            QStringLiteral("选择新的 BOM 会替换当前报价明细，之后仍可继续添加单独物料。是否继续？"),
+            QStringLiteral("更换 BOM 或修改销售数量会重新展开 BOM，并替换当前报价明细；之后仍可继续添加单独物料。是否继续？"),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No
         );
         if (answer != QMessageBox::Yes) {
             const QSignalBlocker blocker(bomCombo_);
             selectId(bomCombo_, previousId, {});
+            bomQuantitySpin_->setValue(static_cast<double>(previousQuantityMicros) / 1'000'000.0);
             return;
         }
     }
@@ -549,6 +579,7 @@ void QuoteManagementWidget::loadSelectedBom() {
     pendingBomMaterials_ = {};
     pendingBomIndex_ = 0;
     loadedBomId_ = selectedId;
+    loadedBomQuantityMicros_ = selectedQuantityMicros;
     if (selectedId <= 0) {
         statusLabel_->setText(QStringLiteral("已取消 BOM 关联；报价草稿必须关联一个 BOM。"));
         updateControls();
@@ -620,7 +651,8 @@ void QuoteManagementWidget::loadNextBomMaterial() {
     }
     apiClient_->get(
         QStringLiteral("/api/v1/materials/%1").arg(materialId),
-        [self = QPointer<QuoteManagementWidget>(this), generation, bomItem](ApiResponse response) {
+        [self = QPointer<QuoteManagementWidget>(this), generation, bomItem,
+            bomQuantityMicros = loadedBomQuantityMicros_](ApiResponse response) {
             if (!self || generation != self->bomLoadGeneration_) return;
             if (!response.succeeded()) {
                 self->loadingBom_ = false;
@@ -630,8 +662,19 @@ void QuoteManagementWidget::loadNextBomMaterial() {
                 return;
             }
             auto material = response.body;
+            const auto expandedQuantity = multiplyQuantity(
+                bomItem.value(QStringLiteral("quantityMicros")).toInteger(),
+                bomQuantityMicros
+            );
+            if (!expandedQuantity.has_value()) {
+                self->loadingBom_ = false;
+                self->setBusy(false);
+                self->statusLabel_->setText(QStringLiteral("BOM 销售数量过大，无法展开物料数量。"));
+                self->updateControls();
+                return;
+            }
             material.insert(QStringLiteral("_bomQuantityMicros"),
-                            bomItem.value(QStringLiteral("quantityMicros")).toInteger());
+                            *expandedQuantity);
             material.insert(QStringLiteral("_bomNotes"),
                             bomItem.value(QStringLiteral("notes")).toString());
             self->pendingBomMaterials_.append(material);
@@ -704,7 +747,8 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
     *ok = false;
     const auto customerId = customerCombo_->currentData(kIdRole).toLongLong();
     const auto bomId = bomCombo_->currentData(kIdRole).toLongLong();
-    if (customerId <= 0 || bomId <= 0 || itemsTable_->rowCount() == 0) return {};
+    const auto bomQuantityMicros = qRound64(bomQuantitySpin_->value() * 1'000'000.0);
+    if (customerId <= 0 || bomId <= 0 || bomQuantityMicros <= 0 || itemsTable_->rowCount() == 0) return {};
     QJsonArray items;
     for (int row = 0; row < itemsTable_->rowCount(); ++row) {
         const auto quantityValue = scaledDecimal(itemsTable_->item(row, 3)->text(), 6, true);
@@ -726,6 +770,7 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
         {QStringLiteral("taxBasisPoints"), qRound64(taxSpin_->value() * 100.0)},
         {QStringLiteral("notes"), notesEdit_->toPlainText().trimmed()},
         {QStringLiteral("items"), items},
+        {QStringLiteral("bomQuantityMicros"), bomQuantityMicros},
     };
     body.insert(QStringLiteral("bomTemplateId"), bomId);
     if (includeRevision) body.insert(QStringLiteral("revision"), currentRevision_);
@@ -825,6 +870,9 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
         selectId(bomCombo_, quote.value(QStringLiteral("bomTemplateId")).toInteger(), quote.value(QStringLiteral("bomName")).toString());
         loadedBomId_ = bomCombo_->currentData(kIdRole).toLongLong();
     }
+    loadedBomQuantityMicros_ = quote.value(QStringLiteral("bomQuantityMicros")).toInteger();
+    if (loadedBomQuantityMicros_ <= 0) loadedBomQuantityMicros_ = 1'000'000;
+    bomQuantitySpin_->setValue(static_cast<double>(loadedBomQuantityMicros_) / 1'000'000.0);
     freightSpin_->setValue(quote.value(QStringLiteral("freightCents")).toInteger() / 100.0);
     otherFeesSpin_->setValue(quote.value(QStringLiteral("otherFeesCents")).toInteger() / 100.0);
     markupSpin_->setValue(quote.value(QStringLiteral("markupBasisPoints")).toInteger() / 100.0);
@@ -855,6 +903,7 @@ void QuoteManagementWidget::clearEditor() {
     currentId_ = 0;
     currentRevision_ = 0;
     loadedBomId_ = 0;
+    loadedBomQuantityMicros_ = 1'000'000;
     currentStatus_.clear();
     editing_ = false;
     numberLabel_->setText(QStringLiteral("未保存"));
@@ -865,6 +914,7 @@ void QuoteManagementWidget::clearEditor() {
         const QSignalBlocker blocker(bomCombo_);
         if (bomCombo_->count()) bomCombo_->setCurrentIndex(0);
     }
+    bomQuantitySpin_->setValue(1.0);
     pendingBom_ = {};
     pendingBomItems_ = {};
     pendingBomMaterials_ = {};

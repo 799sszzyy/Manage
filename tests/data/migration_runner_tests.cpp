@@ -35,7 +35,7 @@ void builtInCatalogContainsThePublishedSchemas() {
     );
 
     require(error.isEmpty(), error.toStdString());
-    require(migrations.size() == 2, "two built-in migrations expected");
+    require(migrations.size() == 3, "three built-in migrations expected");
     const auto& migration = migrations.at(0);
     require(migration.version == 1, "initial migration version");
     require(
@@ -86,6 +86,17 @@ void builtInCatalogContainsThePublishedSchemas() {
     require(
         quoteMigration.sql.contains(QStringLiteral("fk_quotes_bom_template")),
         "quote migration adds BOM foreign key"
+    );
+
+    const auto& quantityMigration = migrations.at(2);
+    require(quantityMigration.version == 3, "quote BOM quantity migration version");
+    require(
+        quantityMigration.name == QStringLiteral("003_quote_bom_quantity"),
+        "quote BOM quantity migration name"
+    );
+    require(
+        quantityMigration.sql.contains(QStringLiteral("bom_quantity_micros")),
+        "quote migration adds BOM quantity"
     );
 }
 

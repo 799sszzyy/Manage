@@ -44,7 +44,7 @@ private:
     void loadCustomers();
     void loadBoms();
     void loadMaterials();
-    void loadSelectedBom();
+    void loadSelectedBom(bool forceReload = false);
     void loadNextBomMaterial();
     void addMaterialRow(const QJsonObject& material, qint64 quantityMicros, const QString& notes);
 
@@ -71,6 +71,7 @@ private:
     qint64 currentId_{};
     qint64 currentRevision_{};
     qint64 loadedBomId_{};
+    qint64 loadedBomQuantityMicros_{1'000'000};
     QString currentStatus_;
     bool editing_{};
     QJsonArray quotes_;
@@ -102,6 +103,7 @@ private:
     QLabel* revisionLabel_{};
     QComboBox* customerCombo_{};
     QComboBox* bomCombo_{};
+    QDoubleSpinBox* bomQuantitySpin_{};
     QLineEdit* materialSearchEdit_{};
     QPushButton* materialSearchButton_{};
     QComboBox* materialCombo_{};

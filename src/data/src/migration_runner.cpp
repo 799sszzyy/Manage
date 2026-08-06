@@ -390,6 +390,7 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
     constexpr ResourceMigration resources[] = {
         {1, "001_initial_schema"},
         {2, "002_quote_bom_template"},
+        {3, "003_quote_bom_quantity"},
     };
 
     QList<Migration> migrations;
