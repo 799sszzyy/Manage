@@ -146,6 +146,8 @@ private:
     QLineEdit* supplierNameEdit_{};
     QLineEdit* supplierContactEdit_{};
     QLineEdit* supplierPhoneEdit_{};
+    // 供货周期（天）：该供应商对当前物料的交货周期，用于交期计算。
+    QLineEdit* supplierLeadDaysEdit_{};
     QCheckBox* supplierDefaultCheck_{};
     QPushButton* supplierSaveButton_{};
     QPushButton* supplierCancelButton_{};

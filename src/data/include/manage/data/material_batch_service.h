@@ -12,6 +12,10 @@ namespace manage::data {
 struct MaterialBatchRow final {
     int sourceRow{};
     MaterialDraft material;
+    // 可选的供应商分支：供应商名称非空时，导入会同步创建/更新
+    // 该物料下的供应商分支并写入交货周期（天）。
+    QString supplierName;
+    int leadDays{0};
 };
 
 struct MaterialBatchError final {

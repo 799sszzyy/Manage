@@ -243,11 +243,12 @@ QWidget* CatalogWidget::createMaterialEditor() {
     auto* supplierLayout = new QVBoxLayout(supplierGroupBox_);
     suppliersTable_ = new QTableWidget(supplierGroupBox_);
     suppliersTable_->setObjectName(QStringLiteral("suppliersTable"));
-    suppliersTable_->setColumnCount(6);
+    suppliersTable_->setColumnCount(7);
     suppliersTable_->setHorizontalHeaderLabels({
         QStringLiteral("供应商"),
         QStringLiteral("联系人"),
         QStringLiteral("电话"),
+        QStringLiteral("供货周期（天）"),
         QStringLiteral("默认"),
         QStringLiteral("状态"),
         QStringLiteral("版本"),
@@ -291,6 +292,10 @@ QWidget* CatalogWidget::createMaterialEditor() {
         QStringLiteral("supplierContactEdit"), supplierEditor_
     );
     supplierPhoneEdit_ = lineEdit(QStringLiteral("supplierPhoneEdit"), supplierEditor_);
+    supplierLeadDaysEdit_ = lineEdit(
+        QStringLiteral("supplierLeadDaysEdit"), supplierEditor_
+    );
+    supplierLeadDaysEdit_->setPlaceholderText(QStringLiteral("例如 7"));
     supplierDefaultCheck_ = new QCheckBox(QStringLiteral("默认供应商"), supplierEditor_);
     supplierDefaultCheck_->setObjectName(QStringLiteral("supplierDefaultCheck"));
     supplierSaveButton_ = button(
@@ -302,6 +307,7 @@ QWidget* CatalogWidget::createMaterialEditor() {
     supplierForm->addRow(QStringLiteral("供应商名称 *"), supplierNameEdit_);
     supplierForm->addRow(QStringLiteral("联系人"), supplierContactEdit_);
     supplierForm->addRow(QStringLiteral("电话"), supplierPhoneEdit_);
+    supplierForm->addRow(QStringLiteral("供货周期（天）"), supplierLeadDaysEdit_);
     supplierForm->addRow(QString(), supplierDefaultCheck_);
     auto* supplierButtons = new QHBoxLayout;
     supplierButtons->addWidget(supplierSaveButton_);
@@ -1108,9 +1114,10 @@ void CatalogWidget::showSuppliers(const ApiResponse& response) {
         suppliersTable_->setItem(row, 0, readOnlyItem(supplier.value(QStringLiteral("supplierName")).toString()));
         suppliersTable_->setItem(row, 1, readOnlyItem(supplier.value(QStringLiteral("contactName")).toString()));
         suppliersTable_->setItem(row, 2, readOnlyItem(supplier.value(QStringLiteral("phone")).toString()));
-        suppliersTable_->setItem(row, 3, readOnlyItem(supplier.value(QStringLiteral("isDefault")).toBool() ? QStringLiteral("是") : QStringLiteral("否")));
-        suppliersTable_->setItem(row, 4, readOnlyItem(supplier.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
-        suppliersTable_->setItem(row, 5, readOnlyItem(QString::number(supplier.value(QStringLiteral("revision")).toInteger())));
+        suppliersTable_->setItem(row, 3, readOnlyItem(QString::number(supplier.value(QStringLiteral("leadDays")).toInt())));
+        suppliersTable_->setItem(row, 4, readOnlyItem(supplier.value(QStringLiteral("isDefault")).toBool() ? QStringLiteral("是") : QStringLiteral("否")));
+        suppliersTable_->setItem(row, 5, readOnlyItem(supplier.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
+        suppliersTable_->setItem(row, 6, readOnlyItem(QString::number(supplier.value(QStringLiteral("revision")).toInteger())));
     }
     suppliersStatusLabel_->setText(QStringLiteral("该物料共 %1 个供应商。")
                                        .arg(suppliers_.size()));
@@ -1131,6 +1138,7 @@ void CatalogWidget::beginNewSupplier() {
     supplierNameEdit_->clear();
     supplierContactEdit_->clear();
     supplierPhoneEdit_->clear();
+    supplierLeadDaysEdit_->clear();
     supplierDefaultCheck_->setChecked(false);
     supplierEditor_->setTitle(QStringLiteral("新增供应商"));
     updateBranchAccess();
@@ -1149,6 +1157,9 @@ void CatalogWidget::beginEditSupplier() {
     supplierNameEdit_->setText(supplier.value(QStringLiteral("supplierName")).toString());
     supplierContactEdit_->setText(supplier.value(QStringLiteral("contactName")).toString());
     supplierPhoneEdit_->setText(supplier.value(QStringLiteral("phone")).toString());
+    supplierLeadDaysEdit_->setText(
+        QString::number(supplier.value(QStringLiteral("leadDays")).toInt())
+    );
     supplierDefaultCheck_->setChecked(supplier.value(QStringLiteral("isDefault")).toBool());
     supplierEditor_->setTitle(QStringLiteral("编辑供应商"));
     updateBranchAccess();
@@ -1163,10 +1174,24 @@ void CatalogWidget::saveSupplier() {
         suppliersStatusLabel_->setText(QStringLiteral("请填写供应商名称。"));
         return;
     }
+    const auto leadDaysText = supplierLeadDaysEdit_->text().trimmed();
+    int leadDays = 0;
+    if (!leadDaysText.isEmpty()) {
+        bool ok = false;
+        const auto parsed = leadDaysText.toInt(&ok);
+        if (!ok || parsed < 0 || parsed > 36'500) {
+            suppliersStatusLabel_->setText(
+                QStringLiteral("供货周期请输入 0-36500 的整数天数。")
+            );
+            return;
+        }
+        leadDays = parsed;
+    }
     QJsonObject body{
         {QStringLiteral("supplierName"), name},
         {QStringLiteral("contactName"), supplierContactEdit_->text().trimmed()},
         {QStringLiteral("phone"), supplierPhoneEdit_->text().trimmed()},
+        {QStringLiteral("leadDays"), leadDays},
         {QStringLiteral("isDefault"), supplierDefaultCheck_->isChecked()},
         {QStringLiteral("isEnabled"), true},
     };
