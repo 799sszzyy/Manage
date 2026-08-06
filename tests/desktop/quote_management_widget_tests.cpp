@@ -127,6 +127,19 @@ struct TestApi final {
                     QJsonObject{{QStringLiteral("id"), 21}, {QStringLiteral("code"), QStringLiteral("BOM-21")}, {QStringLiteral("name"), QStringLiteral("测试总成")}},
                 }}});
             });
+        server.route(QStringLiteral("/api/v1/boms/<arg>"), QHttpServerRequest::Method::Get,
+            [this](qint64) {
+                ++lookupCount;
+                return QHttpServerResponse(QJsonObject{
+                    {QStringLiteral("id"), 21},
+                    {QStringLiteral("code"), QStringLiteral("BOM-21")},
+                    {QStringLiteral("name"), QStringLiteral("测试总成")},
+                    {QStringLiteral("items"), QJsonArray{QJsonObject{
+                        {QStringLiteral("lineNo"), 1}, {QStringLiteral("materialId"), 31},
+                        {QStringLiteral("quantityMicros"), 2'000'000}, {QStringLiteral("notes"), QStringLiteral("BOM 行")},
+                    }}}
+                });
+            });
         server.route(QStringLiteral("/api/v1/materials"), QHttpServerRequest::Method::Get,
             [this](const QHttpServerRequest& request) {
                 ++lookupCount;
@@ -135,7 +148,17 @@ struct TestApi final {
                     QJsonObject{{QStringLiteral("id"), 31}, {QStringLiteral("code"), QStringLiteral("MAT-31")},
                         {QStringLiteral("name"), QStringLiteral("测试钢材")}, {QStringLiteral("specification"), QStringLiteral("10mm")},
                         {QStringLiteral("unit"), QStringLiteral("kg")}, {QStringLiteral("currentUnitPriceCents"), 1234}},
-                }}});
+                    }}});
+            });
+        server.route(QStringLiteral("/api/v1/materials/<arg>"), QHttpServerRequest::Method::Get,
+            [this](qint64) {
+                ++lookupCount;
+                return QHttpServerResponse(QJsonObject{
+                    {QStringLiteral("id"), 31}, {QStringLiteral("code"), QStringLiteral("MAT-31")},
+                    {QStringLiteral("name"), QStringLiteral("测试钢材")}, {QStringLiteral("specification"), QStringLiteral("10mm")},
+                    {QStringLiteral("unit"), QStringLiteral("kg")}, {QStringLiteral("currentUnitPriceCents"), 1234},
+                    {QStringLiteral("isEnabled"), true},
+                });
             });
         server.route(QStringLiteral("/api/v1/quotes"), QHttpServerRequest::Method::Get,
             [this](const QHttpServerRequest& request) {
@@ -291,13 +314,16 @@ void adminLifecycle() {
     require(child<QLabel>(widget, "quoteSavedWithTaxLabel")->text() == QStringLiteral("¥58.10"), "detail total must use server response");
 
     child<QPushButton>(widget, "quoteNewButton")->click();
+    auto* bomCombo = child<QComboBox>(widget, "quoteBomCombo");
+    bomCombo->setCurrentIndex(bomCombo->findData(21, Qt::UserRole));
+    auto* items = child<QTableWidget>(widget, "quoteSavedItemsTable");
+    require(waitUntil([&] { return items->rowCount() == 1; }), "selecting a BOM must load its material rows");
     const auto lookupBeforeSearch = api.lookupCount;
     child<QLineEdit>(widget, "quoteSavedMaterialSearchEdit")->setText(QStringLiteral("特殊钢材"));
     child<QPushButton>(widget, "quoteSavedMaterialSearchButton")->click();
     require(waitUntil([&] { return api.lookupCount > lookupBeforeSearch && api.materialSearch == QStringLiteral("特殊钢材"); }), "material search must reach backend for large catalogs");
     child<QPushButton>(widget, "quoteSavedAddItemButton")->click();
-    auto* items = child<QTableWidget>(widget, "quoteSavedItemsTable");
-    require(items->rowCount() == 1, "material picker must add a quote item");
+    require(items->rowCount() == 2, "material picker must append to BOM material rows");
     items->item(0, 3)->setText(QStringLiteral("2.500001"));
     items->item(0, 4)->setText(QStringLiteral("12.34"));
     child<QDoubleSpinBox>(widget, "quoteSavedFreightSpin")->setValue(10.25);

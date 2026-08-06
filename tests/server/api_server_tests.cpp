@@ -206,6 +206,37 @@ void calculateEndpointReturnsStructuredValidationErrors(
     );
 }
 
+void auxiliaryBusinessRoutesAreRegistered(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& bearerToken,
+    manage::tests::FakeUserRepository& repository
+) {
+    repository.setRole(manage::auth::UserRole::Admin);
+    const auto importResponse = postJson(
+        network,
+        port,
+        QStringLiteral("/api/v1/materials/import"),
+        QJsonObject{{QStringLiteral("rows"), QJsonArray{}}},
+        bearerToken
+    );
+    require(
+        importResponse.status == 503,
+        "material import route must be present even when storage is unavailable"
+    );
+
+    QNetworkRequest statisticsRequest(endpoint(
+        port,
+        QStringLiteral("/api/v1/statistics?startDate=2026-08-01&endDate=2026-08-31")
+    ));
+    statisticsRequest.setRawHeader("Authorization", "Bearer " + bearerToken);
+    const auto statisticsResponse = waitForReply(network.get(statisticsRequest));
+    require(
+        statisticsResponse.status == 503,
+        "statistics route must be present even when storage is unavailable"
+    );
+}
+
 QByteArray authenticationEndpointsStartTheSession(
     QNetworkAccessManager& network,
     quint16 port
@@ -466,6 +497,10 @@ int main(int argc, char* argv[]) {
             [&]() { calculateEndpointReturnsStructuredValidationErrors(
                 network, port, accessToken
             ); }
+        },
+        {
+            "auxiliary business routes",
+            [&]() { auxiliaryBusinessRoutesAreRegistered(network, port, accessToken, *repository); }
         },
         {
             "logout invalidation",
