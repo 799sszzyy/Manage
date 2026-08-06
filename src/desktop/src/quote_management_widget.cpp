@@ -652,7 +652,7 @@ void QuoteManagementWidget::addProcessStep() {
         statusLabel_->setText(QStringLiteral("请先在工序库中选择一道工序。"));
         return;
     }
-    const auto step = processCombo_->currentData(Qt::UserRole + 2).toObject();
+    const auto step = processCombo_->currentData(Qt::UserRole + 2).value<QJsonObject>();
     if (step.isEmpty()) return;
     const auto row = processTable_->rowCount();
     processTable_->insertRow(row);
