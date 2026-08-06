@@ -61,10 +61,11 @@ ctest --test-dir build-final -C Release --output-on-failure
 
 `deploy/windows/Package-Manage.ps1` 会生成带 Qt、QMYSQL 和 `libmysql.dll` 的时间戳目录，不覆盖旧包。运行包内：
 
-1. 默认数据库为 `127.0.0.1:3306/manage`，用户为 `manage_app`；如有不同，编辑 `Start-ManageServer.cmd` 中的 `--db-*` 参数。
-2. 双击 `Start-ManageServer.cmd`，在可见控制台中输入数据库密码并保持窗口开启；输入不会回显。
-3. 双击 `Start-ManageDesktop.cmd` 打开桌面端。
-4. 备份/恢复工具使用 `manage.settings.psd1.example` 的副本。若系统禁止 `.ps1`，不要使用 `ExecutionPolicy Bypass`；应采用签名脚本策略或 MySQL 官方工具。
+1. 如果本机 MySQL 没有作为服务运行，先双击 `Start-ManageMySQL.cmd`。
+2. 默认数据库为 `127.0.0.1:3306/manage`，用户为 `manage_app`；如有不同，编辑 `Start-ManageServer.cmd` 中的 `--db-*` 参数。
+3. 双击 `Start-ManageServer.cmd`，在可见控制台中输入数据库密码并保持窗口开启；输入不会回显。
+4. 双击 `Start-ManageDesktop.cmd` 打开桌面端。
+5. 备份/恢复工具使用 `manage.settings.psd1.example` 的副本。若系统禁止 `.ps1`，不要使用 `ExecutionPolicy Bypass`；应采用签名脚本策略或 MySQL 官方工具。
 
 完整操作和代码映射见 `docs/本地报价管理系统-用户说明书.docx` 与 `docs/本地报价管理系统-开发说明书.docx`。
 

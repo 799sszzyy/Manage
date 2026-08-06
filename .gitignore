@@ -31,4 +31,5 @@ db-migrations/*.local.sql
 # Final Windows packages, local secrets, and database backups are generated.
 /dist/
 /deploy/windows/manage.settings.psd1
+/deploy/windows/manage-mysql-local.ini
 /deploy/windows/backups/
