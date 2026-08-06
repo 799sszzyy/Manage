@@ -109,6 +109,8 @@ struct QuoteSummary final {
     int laborCount{1};
     qint64 processTotalMinutes{0};
     int estimatedDeliveryDays{0};
+    // 交期日期 = 创建日期 + estimatedDeliveryDays（由 SQL DATE_ADD 精确计算）。
+    std::optional<QDateTime> estimatedDeliveryAt;
     QuoteStatus status{QuoteStatus::Draft};
     qint64 priceWithTaxCents{};
     int revision{1};

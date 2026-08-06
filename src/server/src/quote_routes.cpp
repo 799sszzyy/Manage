@@ -114,6 +114,7 @@ QJsonObject summaryJson(const manage::data::QuoteSummary& summary) {
         {QStringLiteral("laborCount"), summary.laborCount},
         {QStringLiteral("processTotalMinutes"), summary.processTotalMinutes},
         {QStringLiteral("estimatedDeliveryDays"), summary.estimatedDeliveryDays},
+        {QStringLiteral("estimatedDeliveryAt"), dateTimeJson(summary.estimatedDeliveryAt.value_or(QDateTime{}))},
         {
             QStringLiteral("status"),
             manage::data::quoteStatusCode(summary.status)
