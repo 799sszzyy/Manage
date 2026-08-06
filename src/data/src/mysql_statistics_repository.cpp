@@ -194,4 +194,203 @@ QuoteResult<StatisticsReport> MySqlStatisticsRepository::query(StatisticsFilter 
     return QuoteResult<StatisticsReport>::success(std::move(report));
 }
 
+// ---- 工程师责任制 ----
+
+QString engineerPeriodWhere(const EngineerResponsibilityFilter& filter) {
+    QStringList conditions{
+        QStringLiteral("q.assigned_engineer_id IS NOT NULL"),
+        QStringLiteral("q.expected_completion_at >= :startAt"),
+        QStringLiteral("q.expected_completion_at < :endAt"),
+    };
+    if (filter.engineerId.has_value()) {
+        conditions.append(QStringLiteral("q.assigned_engineer_id = :engineerId"));
+    }
+    return conditions.join(QStringLiteral(" AND "));
+}
+
+void bindEngineerPeriod(QSqlQuery& query, const EngineerResponsibilityFilter& filter) {
+    query.bindValue(QStringLiteral(":startAt"), QDateTime(filter.periodStart, QTime(0, 0)));
+    query.bindValue(QStringLiteral(":endAt"), QDateTime(filter.periodEnd.addDays(1), QTime(0, 0)));
+    if (filter.engineerId.has_value()) {
+        query.bindValue(QStringLiteral(":engineerId"), idValue(*filter.engineerId));
+    }
+}
+
+// 汇总列统一为：任务数、已提交、未提交、准时、逾期、平均偏差天数。
+QString engineerSummarySelect() {
+    return QStringLiteral(
+        "COUNT(*), "
+        "COALESCE(SUM(q.engineer_submitted_at IS NOT NULL), 0), "
+        "COALESCE(SUM(q.engineer_submitted_at IS NULL), 0), "
+        "COALESCE(SUM(q.engineer_submitted_at IS NOT NULL AND "
+        "q.engineer_submitted_at <= q.expected_completion_at), 0), "
+        "COALESCE(SUM(q.engineer_submitted_at IS NOT NULL AND "
+        "q.engineer_submitted_at > q.expected_completion_at), 0), "
+        "COALESCE(ROUND(AVG(CASE WHEN q.engineer_submitted_at IS NOT NULL "
+        "THEN DATEDIFF(q.engineer_submitted_at, q.expected_completion_at) "
+        "END)), 0)"
+    );
+}
+
+EngineerPeriodSummary readEngineerSummary(const QSqlQuery& query, int columnOffset) {
+    EngineerPeriodSummary summary;
+    summary.assignedCount = integer(query.value(0 + columnOffset));
+    summary.submittedCount = integer(query.value(1 + columnOffset));
+    summary.unsubmittedCount = integer(query.value(2 + columnOffset));
+    summary.onTimeCount = integer(query.value(3 + columnOffset));
+    summary.lateCount = integer(query.value(4 + columnOffset));
+    summary.averageDeviationDays = integer(query.value(5 + columnOffset));
+    if (summary.submittedCount > 0) {
+        summary.onTimeRateBasisPoints = static_cast<int>(
+            (summary.onTimeCount * 10'000 + summary.submittedCount / 2) /
+            summary.submittedCount
+        );
+    }
+    return summary;
+}
+
+QuoteResult<EngineerResponsibilityReport>
+MySqlStatisticsRepository::queryEngineerResponsibility(
+    EngineerResponsibilityFilter filter
+) {
+    if (filter.engineerId.has_value() && *filter.engineerId <= 0) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("engineerId must be greater than zero")
+        );
+    }
+    if (!filter.periodStart.isValid() || !filter.periodEnd.isValid() ||
+        filter.periodStart > filter.periodEnd ||
+        !filter.periodEnd.addDays(1).isValid()) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("engineer responsibility period is invalid")
+        );
+    }
+    if (!database_.isValid() || !database_.isOpen()) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Infrastructure,
+            QStringLiteral("statistics database is unavailable")
+        );
+    }
+
+    ReadTransaction transaction(database_);
+    if (!transaction.started()) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Infrastructure,
+            QStringLiteral("unable to start engineer responsibility transaction: %1")
+                .arg(database_.lastError().text())
+        );
+    }
+
+    EngineerResponsibilityReport report;
+    report.filter = filter;
+    const auto where = engineerPeriodWhere(filter);
+
+    if (filter.engineerId.has_value()) {
+        QSqlQuery name(database_);
+        name.prepare(QStringLiteral(
+            "SELECT display_name FROM users WHERE id = :id"
+        ));
+        name.bindValue(QStringLiteral(":id"), idValue(*filter.engineerId));
+        const auto nameExecuted = execute(
+            name, QStringLiteral("unable to read engineer display name")
+        );
+        if (!nameExecuted.ok() || !name.next()) {
+            return failure<EngineerResponsibilityReport>(
+                QuoteErrorCode::Validation,
+                QStringLiteral("engineer account does not exist")
+            );
+        }
+        report.engineerName = name.value(0).toString();
+    } else {
+        QSqlQuery grouped(database_);
+        grouped.prepare(QStringLiteral(
+            "SELECT q.assigned_engineer_id, u.display_name, %1 FROM quotes q "
+            "JOIN users u ON u.id = q.assigned_engineer_id "
+            "WHERE %2 GROUP BY q.assigned_engineer_id, u.display_name "
+            "ORDER BY COUNT(*) DESC, q.assigned_engineer_id"
+        ).arg(engineerSummarySelect(), where));
+        bindEngineerPeriod(grouped, filter);
+        const auto groupedExecuted = execute(
+            grouped, QStringLiteral("unable to aggregate engineer responsibility")
+        );
+        if (!groupedExecuted.ok()) {
+            return failure<EngineerResponsibilityReport>(
+                QuoteErrorCode::Infrastructure, groupedExecuted.message
+            );
+        }
+        while (grouped.next()) {
+            EngineerSummaryRow row;
+            row.engineerId = integer(grouped.value(0));
+            row.engineerName = grouped.value(1).toString();
+            row.summary = readEngineerSummary(grouped, 2);
+            report.byEngineer.push_back(std::move(row));
+        }
+    }
+
+    QSqlQuery summary(database_);
+    summary.prepare(QStringLiteral(
+        "SELECT %1 FROM quotes q WHERE %2"
+    ).arg(engineerSummarySelect(), where));
+    bindEngineerPeriod(summary, filter);
+    const auto summaryExecuted = execute(
+        summary, QStringLiteral("unable to aggregate engineer responsibility summary")
+    );
+    if (!summaryExecuted.ok() || !summary.next()) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Infrastructure,
+            summaryExecuted.ok()
+                ? QStringLiteral("engineer responsibility summary row is missing")
+                : summaryExecuted.message
+        );
+    }
+    report.summary = readEngineerSummary(summary, 0);
+
+    QSqlQuery tasks(database_);
+    tasks.prepare(QStringLiteral(
+        "SELECT q.id, q.quote_number, q.customer_name_snapshot, q.status, "
+        "q.expected_completion_at, q.engineer_submitted_at, "
+        "COALESCE(u.display_name, '') FROM quotes q "
+        "LEFT JOIN users u ON u.id = q.assigned_engineer_id "
+        "WHERE %1 ORDER BY q.expected_completion_at, q.id"
+    ).arg(where));
+    bindEngineerPeriod(tasks, filter);
+    const auto tasksExecuted = execute(
+        tasks, QStringLiteral("unable to list engineer responsibility tasks")
+    );
+    if (!tasksExecuted.ok()) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Infrastructure, tasksExecuted.message
+        );
+    }
+    while (tasks.next()) {
+        EngineerTaskRow row;
+        row.quoteId = integer(tasks.value(0));
+        row.quoteNumber = tasks.value(1).toString();
+        row.customerName = tasks.value(2).toString();
+        row.status = quoteStatusFromCode(tasks.value(3).toString())
+                         .value_or(QuoteStatus::Draft);
+        row.expectedCompletionAt = tasks.value(4).toDateTime();
+        row.engineerName = tasks.value(6).toString();
+        if (!tasks.value(5).isNull()) {
+            row.submittedAt = tasks.value(5).toDateTime();
+            row.onTime = *row.submittedAt <= row.expectedCompletionAt;
+            // 偏差天数 = 提交 - 预测；提前为负、逾期为正。
+            row.deviationDays =
+                static_cast<qint64>(row.expectedCompletionAt.daysTo(*row.submittedAt));
+        }
+        report.tasks.push_back(std::move(row));
+    }
+
+    if (!transaction.commit()) {
+        return failure<EngineerResponsibilityReport>(
+            QuoteErrorCode::Infrastructure,
+            QStringLiteral("unable to finish engineer responsibility transaction: %1")
+                .arg(database_.lastError().text())
+        );
+    }
+    return QuoteResult<EngineerResponsibilityReport>::success(std::move(report));
+}
+
 } // namespace manage::data

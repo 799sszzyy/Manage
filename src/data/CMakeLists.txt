@@ -39,6 +39,7 @@ qt_add_resources(manage_data "manage_migrations"
         "${PROJECT_SOURCE_DIR}/db-migrations/003_quote_bom_quantity.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/004_material_supplier_pricing.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/005_lead_time_process.sql"
+        "${PROJECT_SOURCE_DIR}/db-migrations/006_engineer_responsibility.sql"
 )
 
 manage_apply_project_options(manage_data)

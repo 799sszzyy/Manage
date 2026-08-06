@@ -63,6 +63,10 @@ struct QuoteDraft final {
     int laborCount{1};
     // 手动选用的工序步骤（可来自工序库，也可直接录入）。
     std::vector<QuoteProcessInput> processSteps;
+    // 工程师责任制：销售指派的工程师账号（NULL 表示尚未指派）。
+    std::optional<qint64> assignedEngineerId;
+    // 工程师责任制：销售预测的 BOM 构建完成时间（deadline）。
+    std::optional<QDateTime> expectedCompletionAt;
     qint64 freightCents{};
     qint64 otherFeesCents{};
     int markupBasisPoints{};
@@ -110,6 +114,10 @@ struct QuoteSummary final {
     int revision{1};
     QDateTime createdAt;
     QDateTime updatedAt;
+    // 工程师责任制：指派工程师、预测完成时间、工程师实际提交时间。
+    std::optional<qint64> assignedEngineerId;
+    std::optional<QDateTime> expectedCompletionAt;
+    std::optional<QDateTime> engineerSubmittedAt;
 };
 
 struct QuoteDocument final {

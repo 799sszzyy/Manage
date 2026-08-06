@@ -25,7 +25,8 @@ constexpr auto kQuoteDocumentColumns =
     "q.price_before_tax_cents, q.tax_basis_points, q.tax_amount_cents, "
     "q.price_with_tax_cents, q.notes, q.source_quote_id, q.created_by, "
     "q.updated_by, q.issued_at, q.voided_at, q.revision, q.created_at, "
-    "q.updated_at";
+    "q.updated_at, q.assigned_engineer_id, q.expected_completion_at, "
+    "q.engineer_submitted_at";
 
 template<typename T>
 QuoteResult<T> failure(QuoteErrorCode code, const QString& message) {
@@ -58,6 +59,12 @@ QVariant optionalIdValue(const std::optional<qint64>& value) {
     return value.has_value()
                ? idValue(*value)
                : QVariant(QMetaType::fromType<qlonglong>());
+}
+
+QVariant optionalDateTimeValue(const std::optional<QDateTime>& value) {
+    return value.has_value() && value->isValid()
+               ? QVariant::fromValue<QDateTime>(*value)
+               : QVariant(QMetaType::fromType<QDateTime>());
 }
 
 QString nonNull(const QString& value) {
@@ -135,6 +142,9 @@ struct PreparedDraft final {
     qint64 taxAmountCents{};
     qint64 priceWithTaxCents{};
     QString notes;
+    // 工程师责任制：指派工程师账号与预测 BOM 构建完成时间。
+    std::optional<qint64> engineerId;
+    std::optional<QDateTime> expectedCompletionAt;
     std::vector<PreparedLine> items;
     std::vector<PreparedProcessLine> processSteps;
 };
@@ -236,6 +246,22 @@ QuoteResult<PreparedDraft> prepareDraft(
     prepared.markupBasisPoints = draft.markupBasisPoints;
     prepared.taxBasisPoints = draft.taxBasisPoints;
     prepared.notes = nonNull(draft.notes);
+    // 工程师责任制字段：仅在草稿阶段允许指派/修改；发布后保持快照。
+    prepared.engineerId = draft.assignedEngineerId;
+    prepared.expectedCompletionAt = draft.expectedCompletionAt;
+    if (draft.assignedEngineerId.has_value() && *draft.assignedEngineerId <= 0) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("assignedEngineerId must be greater than zero")
+        );
+    }
+    if (draft.expectedCompletionAt.has_value() &&
+        !draft.expectedCompletionAt->isValid()) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("expectedCompletionAt must be a valid timestamp")
+        );
+    }
 
     QSqlQuery customer(database);
     customer.prepare(QStringLiteral(
@@ -428,6 +454,11 @@ void bindPreparedHeader(
     query.bindValue(QStringLiteral(":taxAmount"), idValue(draft.taxAmountCents));
     query.bindValue(QStringLiteral(":withTax"), idValue(draft.priceWithTaxCents));
     query.bindValue(QStringLiteral(":notes"), draft.notes);
+    query.bindValue(QStringLiteral(":assignedEngineerId"), optionalIdValue(draft.engineerId));
+    query.bindValue(
+        QStringLiteral(":expectedCompletionAt"),
+        optionalDateTimeValue(draft.expectedCompletionAt)
+    );
     query.bindValue(QStringLiteral(":actor"), idValue(actorUserId));
 }
 
@@ -516,6 +547,9 @@ QuoteSummary readSummary(const QSqlQuery& query) {
     summary.revision = query.value(12).toInt();
     summary.createdAt = query.value(13).toDateTime();
     summary.updatedAt = query.value(14).toDateTime();
+    if (!query.value(15).isNull()) summary.assignedEngineerId = query.value(15).toLongLong();
+    if (!query.value(16).isNull()) summary.expectedCompletionAt = query.value(16).toDateTime();
+    if (!query.value(17).isNull()) summary.engineerSubmittedAt = query.value(17).toDateTime();
     return summary;
 }
 
@@ -559,6 +593,9 @@ QuoteDocument readDocumentHeader(const QSqlQuery& query) {
     document.summary.revision = query.value(29).toInt();
     document.summary.createdAt = query.value(30).toDateTime();
     document.summary.updatedAt = query.value(31).toDateTime();
+    if (!query.value(32).isNull()) document.summary.assignedEngineerId = query.value(32).toLongLong();
+    if (!query.value(33).isNull()) document.summary.expectedCompletionAt = query.value(33).toDateTime();
+    if (!query.value(34).isNull()) document.summary.engineerSubmittedAt = query.value(34).toDateTime();
     return document;
 }
 
@@ -754,7 +791,8 @@ QuoteResult<QuotePage> MySqlQuoteLifecycle::list(QuoteSearchQuery request) {
         "bom_template_id, bom_quantity_micros, bom_lead_days, labor_count, "
         "process_total_minutes, estimated_delivery_days, status, "
         "price_with_tax_cents, revision, created_at, "
-        "updated_at FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
+        "updated_at, assigned_engineer_id, expected_completion_at, "
+        "engineer_submitted_at FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
     ).arg(where).arg(request.pageSize).arg(offset));
     bindFilters(items);
     if (!items.exec()) {
@@ -828,13 +866,15 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::create(CreateQuoteCommand comman
         "estimated_delivery_days, status, material_cost_cents, "
         "freight_cents, other_fees_cents, markup_basis_points, markup_amount_cents, "
         "price_before_tax_cents, tax_basis_points, tax_amount_cents, "
-        "price_with_tax_cents, notes, source_quote_id, created_by, updated_by) "
+        "price_with_tax_cents, notes, source_quote_id, "
+        "assigned_engineer_id, expected_completion_at, created_by, updated_by) "
         "VALUES (:temporaryNumber, :customerId, :customerName, :customerContact, "
         ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, "
         ":bomLeadDays, :laborCount, :processTotalMinutes, "
         ":estimatedDeliveryDays, 'draft', :materialCost, "
         ":freight, :otherFees, :markupRate, :markupAmount, :beforeTax, :taxRate, "
-        ":taxAmount, :withTax, :notes, NULL, :actor, :actor)"
+        ":taxAmount, :withTax, :notes, NULL, "
+        ":assignedEngineerId, :expectedCompletionAt, :actor, :actor)"
     ));
     bindPreparedHeader(insert, *prepared.value, command.actorUserId);
     insert.bindValue(
@@ -927,6 +967,8 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::update(UpdateQuoteCommand comman
         "markup_basis_points = :markupRate, markup_amount_cents = :markupAmount, "
         "price_before_tax_cents = :beforeTax, tax_basis_points = :taxRate, "
         "tax_amount_cents = :taxAmount, price_with_tax_cents = :withTax, "
+        "assigned_engineer_id = :assignedEngineerId, "
+        "expected_completion_at = :expectedCompletionAt, "
         "notes = :notes, updated_by = :actor, revision = revision + 1 "
         "WHERE id = :id AND status = 'draft' AND revision = :revision"
     ));
@@ -1035,6 +1077,9 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::changeStatus(
     if (command.targetStatus == QuoteStatus::Issued) {
         updateQuery.prepare(QStringLiteral(
             "UPDATE quotes SET status = 'issued', issued_at = CURRENT_TIMESTAMP(6), "
+            "engineer_submitted_at = IF(assigned_engineer_id IS NOT NULL, "
+            "COALESCE(engineer_submitted_at, CURRENT_TIMESTAMP(6)), "
+            "engineer_submitted_at), "
             "voided_at = NULL, updated_by = :actor, revision = revision + 1 "
             "WHERE id = :id AND revision = :revision AND status = 'draft'"
         ));
@@ -1095,13 +1140,15 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
         "estimated_delivery_days, status, material_cost_cents, "
         "freight_cents, other_fees_cents, markup_basis_points, markup_amount_cents, "
         "price_before_tax_cents, tax_basis_points, tax_amount_cents, "
-        "price_with_tax_cents, notes, source_quote_id, created_by, updated_by) "
+        "price_with_tax_cents, notes, source_quote_id, "
+        "assigned_engineer_id, expected_completion_at, created_by, updated_by) "
         "VALUES (:temporaryNumber, :customerId, :customerName, :customerContact, "
         ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, "
         ":bomLeadDays, :laborCount, :processTotalMinutes, "
         ":estimatedDeliveryDays, 'draft', :materialCost, "
         ":freight, :otherFees, :markupRate, :markupAmount, :beforeTax, :taxRate, "
-        ":taxAmount, :withTax, :notes, :sourceId, :actor, :actor)"
+        ":taxAmount, :withTax, :notes, :sourceId, "
+        ":assignedEngineerId, :expectedCompletionAt, :actor, :actor)"
     ));
     const auto& original = *source.value;
     insert.bindValue(
@@ -1139,6 +1186,15 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
     insert.bindValue(QStringLiteral(":withTax"), idValue(original.priceWithTaxCents));
     insert.bindValue(QStringLiteral(":notes"), original.notes);
     insert.bindValue(QStringLiteral(":sourceId"), idValue(original.summary.id));
+    // 克隆的新草稿保留工程师指派与预测时间，但提交时间为空（新任务未提交）。
+    insert.bindValue(
+        QStringLiteral(":assignedEngineerId"),
+        optionalIdValue(original.summary.assignedEngineerId)
+    );
+    insert.bindValue(
+        QStringLiteral(":expectedCompletionAt"),
+        optionalDateTimeValue(original.summary.expectedCompletionAt)
+    );
     insert.bindValue(QStringLiteral(":actor"), idValue(command.actorUserId));
     if (!insert.exec()) {
         return queryFailure<QuoteDocument>(QStringLiteral("unable to clone quote"), insert);

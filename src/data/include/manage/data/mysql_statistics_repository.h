@@ -10,6 +10,9 @@ class MySqlStatisticsRepository final : public StatisticsRepository {
 public:
     explicit MySqlStatisticsRepository(QSqlDatabase database);
     QuoteResult<StatisticsReport> query(StatisticsFilter filter) override;
+    QuoteResult<EngineerResponsibilityReport> queryEngineerResponsibility(
+        EngineerResponsibilityFilter filter
+    ) override;
 
 private:
     QSqlDatabase database_;

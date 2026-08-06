@@ -393,6 +393,7 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
         {3, "003_quote_bom_quantity"},
         {4, "004_material_supplier_pricing"},
         {5, "005_lead_time_process"},
+        {6, "006_engineer_responsibility"},
     };
 
     QList<Migration> migrations;
