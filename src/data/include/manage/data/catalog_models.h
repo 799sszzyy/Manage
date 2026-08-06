@@ -31,9 +31,10 @@ struct Material final {
     QString specification;
     QString unit;
     QString category;
-    bool isCopperBased{false};
     std::int64_t currentUnitPriceCents{};
     bool isEnabled{true};
+    // 电线类物料标志，按铜价定价；新增字段置于末尾以兼容聚合初始化。
+    bool isCopperBased{false};
     std::uint32_t revision{1};
     QDateTime createdAt;
     QDateTime updatedAt;
@@ -45,9 +46,10 @@ struct MaterialDraft final {
     QString specification;
     QString unit;
     QString category;
-    bool isCopperBased{false};
     std::int64_t currentUnitPriceCents{};
     bool isEnabled{true};
+    // 电线类物料标志，按铜价定价；新增字段置于末尾以兼容聚合初始化。
+    bool isCopperBased{false};
 };
 
 // 物料下的供应商分支：同一编号物料可对应多个供应商。

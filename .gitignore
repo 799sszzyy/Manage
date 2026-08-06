@@ -55,3 +55,6 @@ db-migrations/*.local.sql
 *.log
 /data/
 /runtime/
+
+# WorkBuddy 本地项目记忆与过程数据，不进入公开仓库
+.workbuddy/
