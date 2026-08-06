@@ -122,6 +122,9 @@ QJsonObject summaryJson(const manage::data::QuoteSummary& summary) {
         {QStringLiteral("revision"), summary.revision},
         {QStringLiteral("createdAt"), dateTimeJson(summary.createdAt)},
         {QStringLiteral("updatedAt"), dateTimeJson(summary.updatedAt)},
+        {QStringLiteral("assignedEngineerId"), optionalIdJson(summary.assignedEngineerId)},
+        {QStringLiteral("expectedCompletionAt"), dateTimeJson(summary.expectedCompletionAt.value_or(QDateTime{}))},
+        {QStringLiteral("engineerSubmittedAt"), dateTimeJson(summary.engineerSubmittedAt.value_or(QDateTime{}))},
     };
 }
 
@@ -308,6 +311,42 @@ bool readDraft(
         draft.bomTemplateId = bomTemplateId;
     } else {
         draft.bomTemplateId.reset();
+    }
+
+    // 工程师责任制：指派工程师账号（可空，NULL 表示尚未指派）。
+    if (object.contains(QStringLiteral("engineerId")) &&
+        !object.value(QStringLiteral("engineerId")).isNull()) {
+        qint64 engineerId = 0;
+        if (!readInteger(
+                object,
+                QStringLiteral("engineerId"),
+                engineerId,
+                true
+            )) {
+            message = QStringLiteral("engineerId must be null or a safe integer");
+            return false;
+        }
+        draft.assignedEngineerId = engineerId;
+    } else {
+        draft.assignedEngineerId.reset();
+    }
+
+    // 工程师责任制：销售预测的 BOM 构建完成时间（可空 ISO 8601 时间串）。
+    const auto expectedValue = object.value(QStringLiteral("expectedCompletionAt"));
+    if (expectedValue.isUndefined() || expectedValue.isNull()) {
+        draft.expectedCompletionAt.reset();
+    } else if (!expectedValue.isString()) {
+        message = QStringLiteral("expectedCompletionAt must be null or an ISO timestamp string");
+        return false;
+    } else {
+        const auto parsed = QDateTime::fromString(
+            expectedValue.toString(), Qt::ISODateWithMs
+        );
+        if (!parsed.isValid()) {
+            message = QStringLiteral("expectedCompletionAt must use ISO 8601 format");
+            return false;
+        }
+        draft.expectedCompletionAt = parsed;
     }
 
     if (!readInteger(
