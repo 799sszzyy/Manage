@@ -4,6 +4,7 @@
 
 - `001_initial_schema.sql`：首版账号、物料、客户、BOM、报价单和报价明细结构。
 - `002_quote_bom_template.sql`：为已保存报价补充可选的 BOM 模板关联与索引。
+- `003_quote_bom_quantity.sql`：为报价保存选中 BOM 的销售数量，默认 1 个。
 - `provision-mysql.sql.example`：由数据库管理员执行一次的建库和最小权限账号模板。
 
 应用启动时会取得 MySQL advisory lock，并用 `schema_migrations` 表验证版本、名称和 SHA-256 校验和。执行失败的迁移会保留 `dirty = TRUE`，防止应用在未知的半迁移结构上继续运行。

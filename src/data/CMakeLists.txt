@@ -34,6 +34,7 @@ qt_add_resources(manage_data "manage_migrations"
     FILES
         "${PROJECT_SOURCE_DIR}/db-migrations/001_initial_schema.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/002_quote_bom_template.sql"
+        "${PROJECT_SOURCE_DIR}/db-migrations/003_quote_bom_quantity.sql"
 )
 
 manage_apply_project_options(manage_data)

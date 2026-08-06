@@ -6,7 +6,7 @@ Manage v0.7.0 是一套面向 Windows 的 Qt/C++ 报价管理系统。它可以�
 
 - 客户和物料维护，物料支持批量 Excel 导入、导出与停用。
 - 平铺 BOM 编辑、物料拖入、重复项合并和整行排序。
-- 报价核算、保存、查询、复制、发布和作废，保存客户与物料价格快照。
+- 报价核算、保存、查询、复制、发布和作废；支持选择一个 BOM 后填写销售数量，自动展开物料数量，并保存客户与物料价格快照。
 - 管理员、报价员、查看员三种角色及账号管理。
 - 按日期、客户、状态、月份和物料类别统计并导出 Excel。
 - 单机默认启动、显式局域网模式、Windows 运行包、数据库备份与人工确认恢复。
@@ -59,7 +59,7 @@ ctest --test-dir build-final -C Release --output-on-failure
 
 ## Windows 运行包
 
-`deploy/windows/Package-Manage.ps1` 会生成带 Qt、QMYSQL 和 `libmysql.dll` 的时间戳目录，不覆盖旧包。运行包内：
+`deploy/windows/Package-Manage.ps1` 会生成带 Qt、QMYSQL、MySQL 客户端及其 SSL 运行库的时间戳目录，不覆盖旧包。运行包内：
 
 1. 如果本机 MySQL 没有作为服务运行，先双击 `Start-ManageMySQL.cmd`。
 2. 默认数据库为 `127.0.0.1:3306/manage`，用户为 `manage_app`；如有不同，编辑 `Start-ManageServer.cmd` 中的 `--db-*` 参数。

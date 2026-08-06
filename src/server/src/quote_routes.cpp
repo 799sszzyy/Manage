@@ -109,6 +109,7 @@ QJsonObject summaryJson(const manage::data::QuoteSummary& summary) {
         {QStringLiteral("customerId"), summary.customerId},
         {QStringLiteral("customerName"), summary.customerName},
         {QStringLiteral("bomTemplateId"), optionalIdJson(summary.bomTemplateId)},
+        {QStringLiteral("bomQuantityMicros"), summary.bomQuantityMicros},
         {
             QStringLiteral("status"),
             manage::data::quoteStatusCode(summary.status)
@@ -292,6 +293,17 @@ bool readDraft(
         draft.bomTemplateId = bomTemplateId;
     } else {
         draft.bomTemplateId.reset();
+    }
+
+    if (!readInteger(
+            object,
+            QStringLiteral("bomQuantityMicros"),
+            draft.bomQuantityMicros,
+            false,
+            1'000'000
+        )) {
+        message = QStringLiteral("bomQuantityMicros must be a safe integer");
+        return false;
     }
 
     if (!readInteger(

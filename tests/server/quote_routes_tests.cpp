@@ -55,6 +55,7 @@ manage::data::QuoteDocument sampleDocument(
         44,
         QStringLiteral("Snapshot Customer"),
         9,
+        1'000'000,
         status,
         18'360,
         3,
@@ -300,6 +301,7 @@ QJsonObject draftPayload() {
     return {
         {QStringLiteral("customerId"), 44},
         {QStringLiteral("bomTemplateId"), 9},
+        {QStringLiteral("bomQuantityMicros"), 3'000'000},
         {QStringLiteral("freightCents"), 1'000},
         {QStringLiteral("otherFeesCents"), 200},
         {QStringLiteral("markupBasisPoints"), 2'000},
@@ -339,6 +341,10 @@ void verifySummaryJson(const QJsonObject& object) {
     require(
         object.value(QStringLiteral("bomTemplateId")).toInteger() == 9,
         "bomTemplateId JSON"
+    );
+    require(
+        object.value(QStringLiteral("bomQuantityMicros")).toInteger() == 1'000'000,
+        "bomQuantityMicros JSON"
     );
     require(
         object.value(QStringLiteral("status")).toString() ==
@@ -528,6 +534,8 @@ void checkReadAndWriteRoutes(
             "create customerId parsed");
     require(lifecycle.lastCreate.draft.bomTemplateId == 9,
             "create BOM id parsed");
+    require(lifecycle.lastCreate.draft.bomQuantityMicros == 3'000'000,
+            "create BOM quantity parsed");
     require(lifecycle.lastCreate.draft.items.size() == 1,
             "create lines parsed");
     require(lifecycle.lastCreate.draft.items.front().materialId == 55,

@@ -70,6 +70,7 @@ manage::data::QuoteDraft draftFor(
     manage::data::QuoteDraft draft;
     draft.customerId = customerId;
     draft.bomTemplateId = bomId;
+    draft.bomQuantityMicros = 3'000'000;
     draft.freightCents = 100;
     draft.otherFeesCents = 50;
     draft.markupBasisPoints = 1000;
@@ -138,6 +139,8 @@ void runLifecycle(QSqlDatabase database) {
                 QStringLiteral("server quote number"));
         require(created.value->summary.bomTemplateId == std::optional<qint64>(bomId),
                 QStringLiteral("BOM relationship"));
+        require(created.value->summary.bomQuantityMicros == 3'000'000,
+                QStringLiteral("BOM sales quantity"));
         require(created.value->materialCostCents == 3085,
                 QStringLiteral("fixed-point line calculation"));
         require(created.value->markupAmountCents == 324,

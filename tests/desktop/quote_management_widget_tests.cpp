@@ -267,7 +267,7 @@ struct TestApi final {
     }
     static QJsonObject fromPayload(qint64 id, const QString& number, const QJsonObject& payload, int revision) {
         auto result = makeQuote(id, number, QStringLiteral("draft"), revision);
-        for (const auto& key : {QStringLiteral("customerId"), QStringLiteral("bomTemplateId"), QStringLiteral("freightCents"),
+        for (const auto& key : {QStringLiteral("customerId"), QStringLiteral("bomTemplateId"), QStringLiteral("bomQuantityMicros"), QStringLiteral("freightCents"),
                  QStringLiteral("otherFeesCents"), QStringLiteral("markupBasisPoints"), QStringLiteral("taxBasisPoints"), QStringLiteral("notes")}) {
             result.insert(key, payload.value(key));
         }
@@ -315,9 +315,12 @@ void adminLifecycle() {
 
     child<QPushButton>(widget, "quoteNewButton")->click();
     auto* bomCombo = child<QComboBox>(widget, "quoteBomCombo");
+    auto* bomQuantity = child<QDoubleSpinBox>(widget, "quoteBomQuantitySpin");
+    bomQuantity->setValue(3.0);
     bomCombo->setCurrentIndex(bomCombo->findData(21, Qt::UserRole));
     auto* items = child<QTableWidget>(widget, "quoteSavedItemsTable");
     require(waitUntil([&] { return items->rowCount() == 1; }), "selecting a BOM must load its material rows");
+    require(items->item(0, 3)->text() == QStringLiteral("6"), "BOM quantity must expand material quantities");
     const auto lookupBeforeSearch = api.lookupCount;
     child<QLineEdit>(widget, "quoteSavedMaterialSearchEdit")->setText(QStringLiteral("特殊钢材"));
     child<QPushButton>(widget, "quoteSavedMaterialSearchButton")->click();
@@ -333,6 +336,8 @@ void adminLifecycle() {
     child<QPushButton>(widget, "quoteSavedSaveButton")->click();
     require(waitUntil([&] { return api.createCount == 1; }), "new draft must POST");
     require(api.lastCreateBody.value(QStringLiteral("revision")).isUndefined(), "POST must not send revision");
+    require(api.lastCreateBody.value(QStringLiteral("bomQuantityMicros")).toInteger() == 3'000'000,
+            "POST must preserve BOM quantity");
     const auto postedItem = api.lastCreateBody.value(QStringLiteral("items")).toArray().first().toObject();
     require(postedItem.value(QStringLiteral("quantityMicros")).toInteger() == 2'500'001, "quantity must convert to micros exactly");
     require(postedItem.value(QStringLiteral("unitPriceCents")).toInteger() == 1234, "price must convert to cents exactly");

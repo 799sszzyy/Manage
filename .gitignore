@@ -4,6 +4,7 @@
 /build-local/
 /build-probe*/
 /build-probe*-trace.txt
+/build-*/
 /out/
 /.vs/
 /.docx_qa/
@@ -33,3 +34,24 @@ db-migrations/*.local.sql
 /deploy/windows/manage.settings.psd1
 /deploy/windows/manage-mysql-local.ini
 /deploy/windows/backups/
+
+# Local secrets and machine-specific configuration. Keep example/template files tracked.
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+*.local
+*.local.*
+*.pem
+*.key
+*.pfx
+*.jks
+
+# Local database files and runtime logs; SQL migrations remain tracked.
+*.db
+*.sqlite
+*.sqlite3
+*.log
+/data/
+/runtime/

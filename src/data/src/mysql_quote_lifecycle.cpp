@@ -16,7 +16,7 @@ namespace {
 constexpr auto kQuoteDocumentColumns =
     "q.id, q.quote_number, q.customer_id, q.customer_name_snapshot, "
     "q.customer_contact_snapshot, q.customer_phone_snapshot, "
-    "q.customer_address_snapshot, q.bom_template_id, q.status, "
+    "q.customer_address_snapshot, q.bom_template_id, q.bom_quantity_micros, q.status, "
     "q.material_cost_cents, q.freight_cents, q.other_fees_cents, "
     "q.markup_basis_points, q.markup_amount_cents, "
     "q.price_before_tax_cents, q.tax_basis_points, q.tax_amount_cents, "
@@ -109,6 +109,7 @@ struct PreparedDraft final {
     QString customerPhone;
     QString customerAddress;
     std::optional<qint64> bomTemplateId;
+    qint64 bomQuantityMicros{1'000'000};
     qint64 materialCostCents{};
     qint64 freightCents{};
     qint64 otherFeesCents{};
@@ -167,6 +168,12 @@ QuoteResult<PreparedDraft> prepareDraft(
             QStringLiteral("a quote cannot contain more than 1000 items")
         );
     }
+    if (draft.bomQuantityMicros <= 0) {
+        return failure<PreparedDraft>(
+            QuoteErrorCode::Validation,
+            QStringLiteral("bomQuantityMicros must be greater than zero")
+        );
+    }
 
     const auto actor = validateActor(database, actorUserId);
     if (!actor.ok()) {
@@ -176,6 +183,7 @@ QuoteResult<PreparedDraft> prepareDraft(
     PreparedDraft prepared;
     prepared.customerId = draft.customerId;
     prepared.bomTemplateId = draft.bomTemplateId;
+    prepared.bomQuantityMicros = draft.bomQuantityMicros;
     prepared.freightCents = draft.freightCents;
     prepared.otherFeesCents = draft.otherFeesCents;
     prepared.markupBasisPoints = draft.markupBasisPoints;
@@ -310,6 +318,7 @@ void bindPreparedHeader(
     query.bindValue(QStringLiteral(":customerPhone"), draft.customerPhone);
     query.bindValue(QStringLiteral(":customerAddress"), draft.customerAddress);
     query.bindValue(QStringLiteral(":bomTemplateId"), optionalIdValue(draft.bomTemplateId));
+    query.bindValue(QStringLiteral(":bomQuantity"), idValue(draft.bomQuantityMicros));
     query.bindValue(QStringLiteral(":materialCost"), idValue(draft.materialCostCents));
     query.bindValue(QStringLiteral(":freight"), idValue(draft.freightCents));
     query.bindValue(QStringLiteral(":otherFees"), idValue(draft.otherFeesCents));
@@ -369,12 +378,13 @@ QuoteSummary readSummary(const QSqlQuery& query) {
     if (!query.value(4).isNull()) {
         summary.bomTemplateId = query.value(4).toLongLong();
     }
-    summary.status = quoteStatusFromCode(query.value(5).toString())
+    summary.bomQuantityMicros = query.value(5).toLongLong();
+    summary.status = quoteStatusFromCode(query.value(6).toString())
                          .value_or(QuoteStatus::Draft);
-    summary.priceWithTaxCents = query.value(6).toLongLong();
-    summary.revision = query.value(7).toInt();
-    summary.createdAt = query.value(8).toDateTime();
-    summary.updatedAt = query.value(9).toDateTime();
+    summary.priceWithTaxCents = query.value(7).toLongLong();
+    summary.revision = query.value(8).toInt();
+    summary.createdAt = query.value(9).toDateTime();
+    summary.updatedAt = query.value(10).toDateTime();
     return summary;
 }
 
@@ -390,29 +400,30 @@ QuoteDocument readDocumentHeader(const QSqlQuery& query) {
     if (!query.value(7).isNull()) {
         document.summary.bomTemplateId = query.value(7).toLongLong();
     }
-    document.summary.status = quoteStatusFromCode(query.value(8).toString())
+    document.summary.bomQuantityMicros = query.value(8).toLongLong();
+    document.summary.status = quoteStatusFromCode(query.value(9).toString())
                                   .value_or(QuoteStatus::Draft);
-    document.materialCostCents = query.value(9).toLongLong();
-    document.freightCents = query.value(10).toLongLong();
-    document.otherFeesCents = query.value(11).toLongLong();
-    document.markupBasisPoints = query.value(12).toInt();
-    document.markupAmountCents = query.value(13).toLongLong();
-    document.priceBeforeTaxCents = query.value(14).toLongLong();
-    document.taxBasisPoints = query.value(15).toInt();
-    document.taxAmountCents = query.value(16).toLongLong();
-    document.priceWithTaxCents = query.value(17).toLongLong();
+    document.materialCostCents = query.value(10).toLongLong();
+    document.freightCents = query.value(11).toLongLong();
+    document.otherFeesCents = query.value(12).toLongLong();
+    document.markupBasisPoints = query.value(13).toInt();
+    document.markupAmountCents = query.value(14).toLongLong();
+    document.priceBeforeTaxCents = query.value(15).toLongLong();
+    document.taxBasisPoints = query.value(16).toInt();
+    document.taxAmountCents = query.value(17).toLongLong();
+    document.priceWithTaxCents = query.value(18).toLongLong();
     document.summary.priceWithTaxCents = document.priceWithTaxCents;
-    document.notes = query.value(18).toString();
-    if (!query.value(19).isNull()) {
-        document.sourceQuoteId = query.value(19).toLongLong();
+    document.notes = query.value(19).toString();
+    if (!query.value(20).isNull()) {
+        document.sourceQuoteId = query.value(20).toLongLong();
     }
-    document.createdBy = query.value(20).toLongLong();
-    document.updatedBy = query.value(21).toLongLong();
-    document.issuedAt = query.value(22).toDateTime();
-    document.voidedAt = query.value(23).toDateTime();
-    document.summary.revision = query.value(24).toInt();
-    document.summary.createdAt = query.value(25).toDateTime();
-    document.summary.updatedAt = query.value(26).toDateTime();
+    document.createdBy = query.value(21).toLongLong();
+    document.updatedBy = query.value(22).toLongLong();
+    document.issuedAt = query.value(23).toDateTime();
+    document.voidedAt = query.value(24).toDateTime();
+    document.summary.revision = query.value(25).toInt();
+    document.summary.createdAt = query.value(26).toDateTime();
+    document.summary.updatedAt = query.value(27).toDateTime();
     return document;
 }
 
@@ -585,7 +596,7 @@ QuoteResult<QuotePage> MySqlQuoteLifecycle::list(QuoteSearchQuery request) {
     QSqlQuery items(database_);
     items.prepare(QStringLiteral(
         "SELECT id, quote_number, customer_id, customer_name_snapshot, "
-        "bom_template_id, status, price_with_tax_cents, revision, created_at, "
+        "bom_template_id, bom_quantity_micros, status, price_with_tax_cents, revision, created_at, "
         "updated_at FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
     ).arg(where).arg(request.pageSize).arg(offset));
     bindFilters(items);
@@ -655,12 +666,12 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::create(CreateQuoteCommand comman
     insert.prepare(QStringLiteral(
         "INSERT INTO quotes (quote_number, customer_id, customer_name_snapshot, "
         "customer_contact_snapshot, customer_phone_snapshot, "
-        "customer_address_snapshot, bom_template_id, status, material_cost_cents, "
+        "customer_address_snapshot, bom_template_id, bom_quantity_micros, status, material_cost_cents, "
         "freight_cents, other_fees_cents, markup_basis_points, markup_amount_cents, "
         "price_before_tax_cents, tax_basis_points, tax_amount_cents, "
         "price_with_tax_cents, notes, source_quote_id, created_by, updated_by) "
         "VALUES (:temporaryNumber, :customerId, :customerName, :customerContact, "
-        ":customerPhone, :customerAddress, :bomTemplateId, 'draft', :materialCost, "
+        ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, 'draft', :materialCost, "
         ":freight, :otherFees, :markupRate, :markupAmount, :beforeTax, :taxRate, "
         ":taxAmount, :withTax, :notes, NULL, :actor, :actor)"
     ));
@@ -741,7 +752,8 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::update(UpdateQuoteCommand comman
         "customer_contact_snapshot = :customerContact, "
         "customer_phone_snapshot = :customerPhone, "
         "customer_address_snapshot = :customerAddress, "
-        "bom_template_id = :bomTemplateId, material_cost_cents = :materialCost, "
+        "bom_template_id = :bomTemplateId, bom_quantity_micros = :bomQuantity, "
+        "material_cost_cents = :materialCost, "
         "freight_cents = :freight, other_fees_cents = :otherFees, "
         "markup_basis_points = :markupRate, markup_amount_cents = :markupAmount, "
         "price_before_tax_cents = :beforeTax, tax_basis_points = :taxRate, "
@@ -893,12 +905,12 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
     insert.prepare(QStringLiteral(
         "INSERT INTO quotes (quote_number, customer_id, customer_name_snapshot, "
         "customer_contact_snapshot, customer_phone_snapshot, "
-        "customer_address_snapshot, bom_template_id, status, material_cost_cents, "
+        "customer_address_snapshot, bom_template_id, bom_quantity_micros, status, material_cost_cents, "
         "freight_cents, other_fees_cents, markup_basis_points, markup_amount_cents, "
         "price_before_tax_cents, tax_basis_points, tax_amount_cents, "
         "price_with_tax_cents, notes, source_quote_id, created_by, updated_by) "
         "VALUES (:temporaryNumber, :customerId, :customerName, :customerContact, "
-        ":customerPhone, :customerAddress, :bomTemplateId, 'draft', :materialCost, "
+        ":customerPhone, :customerAddress, :bomTemplateId, :bomQuantity, 'draft', :materialCost, "
         ":freight, :otherFees, :markupRate, :markupAmount, :beforeTax, :taxRate, "
         ":taxAmount, :withTax, :notes, :sourceId, :actor, :actor)"
     ));
@@ -916,6 +928,7 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
         QStringLiteral(":bomTemplateId"),
         optionalIdValue(original.summary.bomTemplateId)
     );
+    insert.bindValue(QStringLiteral(":bomQuantity"), idValue(original.summary.bomQuantityMicros));
     insert.bindValue(QStringLiteral(":materialCost"), idValue(original.materialCostCents));
     insert.bindValue(QStringLiteral(":freight"), idValue(original.freightCents));
     insert.bindValue(QStringLiteral(":otherFees"), idValue(original.otherFeesCents));
