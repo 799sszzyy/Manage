@@ -1,4 +1,5 @@
 add_executable(manage_domain_tests
+    domain/lead_time_calculator_tests.cpp
     domain/quote_calculator_tests.cpp
 )
 

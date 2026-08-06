@@ -1,4 +1,5 @@
 add_library(manage_domain STATIC
+    src/lead_time_calculator.cpp
     src/quote_calculator.cpp
 )
 
