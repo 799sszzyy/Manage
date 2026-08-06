@@ -607,7 +607,7 @@ QuoteResult<QuoteDocument> loadDocument(QSqlDatabase database, qint64 id) {
         document.items.push_back(std::move(item));
     }
 
-    QSqlQuery process(database_);
+    QSqlQuery process(database);
     process.prepare(QStringLiteral(
         "SELECT id, line_no, step_name_snapshot, labor_minutes_snapshot "
         "FROM quote_process_items WHERE quote_id = :quoteId ORDER BY line_no"

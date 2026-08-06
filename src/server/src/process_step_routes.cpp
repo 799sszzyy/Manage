@@ -256,7 +256,7 @@ void ProcessStepRoutes::registerRoutes(
     server.route(
         QStringLiteral("/api/v1/process-steps"),
         QHttpServerRequest::Method::Get,
-        [service, authService](const QHttpServerRequest& request) {
+        [service, authService, readRoles, writeRoles](const QHttpServerRequest& request) {
             if (auto failure = HttpAuthorization::require(request, authService, readRoles)) {
                 return std::move(*failure);
             }
@@ -290,7 +290,7 @@ void ProcessStepRoutes::registerRoutes(
     server.route(
         QStringLiteral("/api/v1/process-steps"),
         QHttpServerRequest::Method::Post,
-        [service, authService](const QHttpServerRequest& request) {
+        [service, authService, readRoles, writeRoles](const QHttpServerRequest& request) {
             if (auto failure = HttpAuthorization::require(request, authService, writeRoles)) {
                 return std::move(*failure);
             }
@@ -319,7 +319,7 @@ void ProcessStepRoutes::registerRoutes(
     server.route(
         QStringLiteral("/api/v1/process-steps/<arg>"),
         QHttpServerRequest::Method::Get,
-        [service, authService](qint64 id, const QHttpServerRequest& request) {
+        [service, authService, readRoles, writeRoles](qint64 id, const QHttpServerRequest& request) {
             if (auto failure = HttpAuthorization::require(request, authService, readRoles)) {
                 return std::move(*failure);
             }
@@ -337,7 +337,7 @@ void ProcessStepRoutes::registerRoutes(
     server.route(
         QStringLiteral("/api/v1/process-steps/<arg>"),
         QHttpServerRequest::Method::Put,
-        [service, authService](qint64 id, const QHttpServerRequest& request) {
+        [service, authService, readRoles, writeRoles](qint64 id, const QHttpServerRequest& request) {
             if (auto failure = HttpAuthorization::require(request, authService, writeRoles)) {
                 return std::move(*failure);
             }
@@ -375,7 +375,7 @@ void ProcessStepRoutes::registerRoutes(
     server.route(
         QStringLiteral("/api/v1/process-steps/<arg>/enabled"),
         QHttpServerRequest::Method::Patch,
-        [service, authService](qint64 id, const QHttpServerRequest& request) {
+        [service, authService, readRoles, writeRoles](qint64 id, const QHttpServerRequest& request) {
             if (auto failure = HttpAuthorization::require(request, authService, writeRoles)) {
                 return std::move(*failure);
             }

@@ -173,11 +173,18 @@ void businessExportsHaveExpectedSheets() {
 
 int main(int argc, char* argv[]) {
     QCoreApplication application(argc, argv);
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
     try {
+        std::cerr << "[0] start\n";
         materialRoundTripUsesRealXlsx();
+        std::cerr << "[1] roundtrip\n";
         templateContainsInstructionsAndNumericPrice();
+        std::cerr << "[2] template\n";
         importerReportsSpecificRows();
+        std::cerr << "[3] importer\n";
         businessExportsHaveExpectedSheets();
+        std::cerr << "[4] business\n";
         if (argc > 1) {
             QFile sample(QString::fromLocal8Bit(argv[1]));
             require(sample.open(QIODevice::WriteOnly), "sample output file must open");
