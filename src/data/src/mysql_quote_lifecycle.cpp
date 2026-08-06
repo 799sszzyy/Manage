@@ -26,7 +26,7 @@ constexpr auto kQuoteDocumentColumns =
     "q.price_with_tax_cents, q.notes, q.source_quote_id, q.created_by, "
     "q.updated_by, q.issued_at, q.voided_at, q.revision, q.created_at, "
     "q.updated_at, q.assigned_engineer_id, q.expected_completion_at, "
-    "q.engineer_submitted_at";
+    "q.engineer_submitted_at, q.estimated_delivery_at";
 
 template<typename T>
 QuoteResult<T> failure(QuoteErrorCode code, const QString& message) {
@@ -550,6 +550,7 @@ QuoteSummary readSummary(const QSqlQuery& query) {
     if (!query.value(15).isNull()) summary.assignedEngineerId = query.value(15).toLongLong();
     if (!query.value(16).isNull()) summary.expectedCompletionAt = query.value(16).toDateTime();
     if (!query.value(17).isNull()) summary.engineerSubmittedAt = query.value(17).toDateTime();
+    if (!query.value(18).isNull()) summary.estimatedDeliveryAt = query.value(18).toDateTime();
     return summary;
 }
 
@@ -596,6 +597,7 @@ QuoteDocument readDocumentHeader(const QSqlQuery& query) {
     if (!query.value(32).isNull()) document.summary.assignedEngineerId = query.value(32).toLongLong();
     if (!query.value(33).isNull()) document.summary.expectedCompletionAt = query.value(33).toDateTime();
     if (!query.value(34).isNull()) document.summary.engineerSubmittedAt = query.value(34).toDateTime();
+    if (!query.value(35).isNull()) document.summary.estimatedDeliveryAt = query.value(35).toDateTime();
     return document;
 }
 
@@ -792,7 +794,8 @@ QuoteResult<QuotePage> MySqlQuoteLifecycle::list(QuoteSearchQuery request) {
         "process_total_minutes, estimated_delivery_days, status, "
         "price_with_tax_cents, revision, created_at, "
         "updated_at, assigned_engineer_id, expected_completion_at, "
-        "engineer_submitted_at FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
+        "engineer_submitted_at, estimated_delivery_at "
+        "FROM quotes%1 ORDER BY id DESC LIMIT %2 OFFSET %3"
     ).arg(where).arg(request.pageSize).arg(offset));
     bindFilters(items);
     if (!items.exec()) {
@@ -899,6 +902,18 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::create(CreateQuoteCommand comman
             QStringLiteral("unable to assign quote number"), number
         );
     }
+    // 交期日期 = 创建日期 + 预计交期天数（SQL DATE_ADD 精确计算）。
+    QSqlQuery deliveryDate(database_);
+    deliveryDate.prepare(QStringLiteral(
+        "UPDATE quotes SET estimated_delivery_at = "
+        "DATE_ADD(created_at, INTERVAL estimated_delivery_days DAY) WHERE id = :id"
+    ));
+    deliveryDate.bindValue(QStringLiteral(":id"), idValue(quoteId));
+    if (!deliveryDate.exec()) {
+        return queryFailure<QuoteDocument>(
+            QStringLiteral("unable to set estimated delivery date"), deliveryDate
+        );
+    }
     const auto lines = insertPreparedLines(database_, quoteId, prepared.value->items);
     if (!lines.ok()) {
         return failure<QuoteDocument>(lines.error, lines.message);
@@ -962,6 +977,7 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::update(UpdateQuoteCommand comman
         "bom_lead_days = :bomLeadDays, labor_count = :laborCount, "
         "process_total_minutes = :processTotalMinutes, "
         "estimated_delivery_days = :estimatedDeliveryDays, "
+        "estimated_delivery_at = DATE_ADD(created_at, INTERVAL :estimatedDeliveryDays DAY), "
         "material_cost_cents = :materialCost, "
         "freight_cents = :freight, other_fees_cents = :otherFees, "
         "markup_basis_points = :markupRate, markup_amount_cents = :markupAmount, "
@@ -1210,6 +1226,18 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
     if (!number.exec() || number.numRowsAffected() != 1) {
         return queryFailure<QuoteDocument>(
             QStringLiteral("unable to assign cloned quote number"), number
+        );
+    }
+    // 克隆的新草稿同样计算交期日期。
+    QSqlQuery cloneDeliveryDate(database_);
+    cloneDeliveryDate.prepare(QStringLiteral(
+        "UPDATE quotes SET estimated_delivery_at = "
+        "DATE_ADD(created_at, INTERVAL estimated_delivery_days DAY) WHERE id = :id"
+    ));
+    cloneDeliveryDate.bindValue(QStringLiteral(":id"), idValue(quoteId));
+    if (!cloneDeliveryDate.exec()) {
+        return queryFailure<QuoteDocument>(
+            QStringLiteral("unable to set cloned delivery date"), cloneDeliveryDate
         );
     }
 

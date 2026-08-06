@@ -395,6 +395,7 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
         {5, "005_lead_time_process"},
         {6, "006_engineer_responsibility"},
         {7, "007_task_dispatch"},
+        {8, "008_delivery_date"},
     };
 
     QList<Migration> migrations;

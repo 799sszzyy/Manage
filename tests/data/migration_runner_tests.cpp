@@ -35,7 +35,7 @@ void builtInCatalogContainsThePublishedSchemas() {
     );
 
     require(error.isEmpty(), error.toStdString());
-    require(migrations.size() == 5, "five built-in migrations expected");
+    require(migrations.size() == 7, "seven built-in migrations expected");
     const auto& migration = migrations.at(0);
     require(migration.version == 1, "initial migration version");
     require(
@@ -157,11 +157,11 @@ void optionalMySqlIntegrationTest() {
     manage::data::MigrationRunner runner(connection.database());
     manage::data::MigrationReport firstReport;
     require(runner.migrate(&firstReport, &error), error.toStdString());
-    require(firstReport.currentVersion == 2, "database schema version after migrate");
+    require(firstReport.currentVersion == 8, "database schema version after migrate");
 
     manage::data::MigrationReport secondReport;
     require(runner.migrate(&secondReport, &error), error.toStdString());
-    require(secondReport.currentVersion == 2, "schema version after repeat migrate");
+    require(secondReport.currentVersion == 8, "schema version after repeat migrate");
     require(secondReport.appliedCount == 0, "repeat migration must be idempotent");
 
     QSqlQuery query(connection.database());

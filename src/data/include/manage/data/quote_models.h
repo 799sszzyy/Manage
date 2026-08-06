@@ -118,6 +118,9 @@ struct QuoteSummary final {
     std::optional<qint64> assignedEngineerId;
     std::optional<QDateTime> expectedCompletionAt;
     std::optional<QDateTime> engineerSubmittedAt;
+    // 交期日期 = 创建日期 + estimatedDeliveryDays（由 SQL DATE_ADD 精确计算）。
+    // 置于末尾以兼容已有位置初始化代码（trailing field 默认 nullopt）。
+    std::optional<QDateTime> estimatedDeliveryAt;
 };
 
 struct QuoteDocument final {
