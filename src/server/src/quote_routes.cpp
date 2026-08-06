@@ -330,34 +330,38 @@ bool readDraft(
     }
 
     const auto processValue = object.value(QStringLiteral("processSteps"));
-    if (!processValue.isArray()) {
+    if (processValue.isUndefined() || processValue.isNull()) {
+        // 未提交工序步骤时视为空列表，兼容旧客户端与既有测试。
+        draft.processSteps.clear();
+    } else if (!processValue.isArray()) {
         message = QStringLiteral("processSteps must be an array");
         return false;
-    }
-    const auto process = processValue.toArray();
-    draft.processSteps.clear();
-    draft.processSteps.reserve(static_cast<std::size_t>(process.size()));
-    for (qsizetype index = 0; index < process.size(); ++index) {
-        if (!process.at(index).isObject()) {
-            message = QStringLiteral("processSteps[%1] must be an object").arg(index);
-            return false;
+    } else {
+        const auto process = processValue.toArray();
+        draft.processSteps.clear();
+        draft.processSteps.reserve(static_cast<std::size_t>(process.size()));
+        for (qsizetype index = 0; index < process.size(); ++index) {
+            if (!process.at(index).isObject()) {
+                message = QStringLiteral("processSteps[%1] must be an object").arg(index);
+                return false;
+            }
+            const auto step = process.at(index).toObject();
+            manage::data::QuoteProcessInput input;
+            if (!readString(step, QStringLiteral("stepName"), input.stepName, true) ||
+                !readInteger(
+                    step,
+                    QStringLiteral("laborMinutes"),
+                    input.laborMinutes,
+                    false,
+                    0
+                )) {
+                message = QStringLiteral(
+                    "processSteps[%1] stepName must be a string and laborMinutes a safe integer"
+                ).arg(index);
+                return false;
+            }
+            draft.processSteps.push_back(std::move(input));
         }
-        const auto step = process.at(index).toObject();
-        manage::data::QuoteProcessInput input;
-        if (!readString(step, QStringLiteral("stepName"), input.stepName, true) ||
-            !readInteger(
-                step,
-                QStringLiteral("laborMinutes"),
-                input.laborMinutes,
-                false,
-                0
-            )) {
-            message = QStringLiteral(
-                "processSteps[%1] stepName must be a string and laborMinutes a safe integer"
-            ).arg(index);
-            return false;
-        }
-        draft.processSteps.push_back(std::move(input));
     }
 
     if (!readInteger(

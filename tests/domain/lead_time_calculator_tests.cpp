@@ -101,7 +101,9 @@ void deliveryDaysValidatesInputs() {
 
 } // namespace
 
-int main() {
+// 由 manage_domain_tests 的统一入口调用，避免与 quote_calculator_tests
+// 的 main 冲突。
+int runLeadTimeCalculatorTests() {
     try {
         bomLeadDaysTakesMaximum();
         bomLeadDaysRejectsNegative();

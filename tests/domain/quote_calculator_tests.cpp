@@ -186,6 +186,9 @@ void reportsOverflowWithoutUndefinedBehavior() {
 
 } // namespace
 
+// 由 manage_domain_tests 统一入口执行交期计算测试（见 lead_time_calculator_tests.cpp）。
+int runLeadTimeCalculatorTests();
+
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> tests = {
         {"calculates quote", calculatesQuoteUsingSnapshotsAndFixedPointMath},
@@ -209,5 +212,9 @@ int main() {
     }
 
     std::cout << passed << "/" << tests.size() << " tests passed\n";
-    return passed == tests.size() ? EXIT_SUCCESS : EXIT_FAILURE;
+    if (passed != tests.size()) {
+        return EXIT_FAILURE;
+    }
+    // 交期计算测试：统一入口执行，避免与 quote 测试重复的 main。
+    return runLeadTimeCalculatorTests();
 }
