@@ -136,13 +136,14 @@ QWidget* CatalogWidget::createMaterialsPage() {
     splitter->setObjectName(QStringLiteral("materialsSplitter"));
     materialsTable_ = new QTableWidget(splitter);
     materialsTable_->setObjectName(QStringLiteral("materialsTable"));
-    materialsTable_->setColumnCount(8);
+    materialsTable_->setColumnCount(9);
     materialsTable_->setHorizontalHeaderLabels({
         QStringLiteral("编码"),
         QStringLiteral("名称"),
         QStringLiteral("规格"),
         QStringLiteral("单位"),
         QStringLiteral("分类"),
+        QStringLiteral("电线类"),
         QStringLiteral("单价（元）"),
         QStringLiteral("状态"),
         QStringLiteral("版本"),
@@ -195,25 +196,31 @@ QWidget* CatalogWidget::createMaterialsPage() {
 QWidget* CatalogWidget::createMaterialEditor() {
     materialEditor_ = new QGroupBox(QStringLiteral("物料信息"), this);
     materialEditor_->setObjectName(QStringLiteral("materialEditor"));
-    auto* layout = new QFormLayout(materialEditor_);
-    materialCodeEdit_ = lineEdit(QStringLiteral("materialCodeEdit"), materialEditor_);
-    materialNameEdit_ = lineEdit(QStringLiteral("materialNameEdit"), materialEditor_);
+    auto* outer = new QVBoxLayout(materialEditor_);
+
+    // 物料基本信息
+    auto* base = new QGroupBox(QStringLiteral("基本信息"), materialEditor_);
+    auto* layout = new QFormLayout(base);
+    materialCodeEdit_ = lineEdit(QStringLiteral("materialCodeEdit"), base);
+    materialNameEdit_ = lineEdit(QStringLiteral("materialNameEdit"), base);
     materialSpecificationEdit_ = lineEdit(
-        QStringLiteral("materialSpecificationEdit"), materialEditor_
+        QStringLiteral("materialSpecificationEdit"), base
     );
-    materialUnitEdit_ = lineEdit(QStringLiteral("materialUnitEdit"), materialEditor_);
+    materialUnitEdit_ = lineEdit(QStringLiteral("materialUnitEdit"), base);
     materialCategoryEdit_ = lineEdit(
-        QStringLiteral("materialCategoryEdit"), materialEditor_
+        QStringLiteral("materialCategoryEdit"), base
     );
-    materialPriceEdit_ = lineEdit(QStringLiteral("materialPriceEdit"), materialEditor_);
+    materialCopperCheck_ = new QCheckBox(QStringLiteral("电线类（按铜价定价）"), base);
+    materialCopperCheck_->setObjectName(QStringLiteral("materialCopperCheck"));
+    materialPriceEdit_ = lineEdit(QStringLiteral("materialPriceEdit"), base);
     materialPriceEdit_->setPlaceholderText(QStringLiteral("例如 12.50"));
-    materialEnabledCheck_ = new QCheckBox(QStringLiteral("启用"), materialEditor_);
+    materialEnabledCheck_ = new QCheckBox(QStringLiteral("启用"), base);
     materialEnabledCheck_->setObjectName(QStringLiteral("materialEnabledCheck"));
     materialSaveButton_ = button(
-        QStringLiteral("保存"), QStringLiteral("materialSaveButton"), materialEditor_
+        QStringLiteral("保存"), QStringLiteral("materialSaveButton"), base
     );
     materialCancelButton_ = button(
-        QStringLiteral("取消"), QStringLiteral("materialCancelButton"), materialEditor_
+        QStringLiteral("取消"), QStringLiteral("materialCancelButton"), base
     );
 
     layout->addRow(QStringLiteral("编码 *"), materialCodeEdit_);
@@ -221,12 +228,158 @@ QWidget* CatalogWidget::createMaterialEditor() {
     layout->addRow(QStringLiteral("规格"), materialSpecificationEdit_);
     layout->addRow(QStringLiteral("单位 *"), materialUnitEdit_);
     layout->addRow(QStringLiteral("分类"), materialCategoryEdit_);
+    layout->addRow(QString(), materialCopperCheck_);
     layout->addRow(QStringLiteral("单价（元）*"), materialPriceEdit_);
     layout->addRow(QString(), materialEnabledCheck_);
     auto* buttons = new QHBoxLayout;
     buttons->addWidget(materialSaveButton_);
     buttons->addWidget(materialCancelButton_);
     layout->addRow(buttons);
+    outer->addWidget(base);
+
+    // 供应商分支
+    supplierGroupBox_ = new QGroupBox(QStringLiteral("供应商分支"), materialEditor_);
+    supplierGroupBox_->setObjectName(QStringLiteral("supplierGroupBox"));
+    auto* supplierLayout = new QVBoxLayout(supplierGroupBox_);
+    suppliersTable_ = new QTableWidget(supplierGroupBox_);
+    suppliersTable_->setObjectName(QStringLiteral("suppliersTable"));
+    suppliersTable_->setColumnCount(6);
+    suppliersTable_->setHorizontalHeaderLabels({
+        QStringLiteral("供应商"),
+        QStringLiteral("联系人"),
+        QStringLiteral("电话"),
+        QStringLiteral("默认"),
+        QStringLiteral("状态"),
+        QStringLiteral("版本"),
+    });
+    suppliersTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    suppliersTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    suppliersTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    suppliersTable_->verticalHeader()->setVisible(false);
+    suppliersTable_->horizontalHeader()->setStretchLastSection(true);
+    supplierLayout->addWidget(suppliersTable_);
+
+    auto* supplierActions = new QHBoxLayout;
+    supplierAddButton_ = button(
+        QStringLiteral("新建供应商"), QStringLiteral("supplierAddButton"),
+        supplierGroupBox_
+    );
+    supplierEditButton_ = button(
+        QStringLiteral("编辑选中"), QStringLiteral("supplierEditButton"),
+        supplierGroupBox_
+    );
+    supplierToggleButton_ = button(
+        QStringLiteral("停用选中"), QStringLiteral("supplierToggleButton"),
+        supplierGroupBox_
+    );
+    supplierActions->addWidget(supplierAddButton_);
+    supplierActions->addWidget(supplierEditButton_);
+    supplierActions->addWidget(supplierToggleButton_);
+    supplierActions->addStretch();
+    supplierLayout->addLayout(supplierActions);
+
+    suppliersStatusLabel_ = new QLabel(supplierGroupBox_);
+    suppliersStatusLabel_->setObjectName(QStringLiteral("suppliersStatusLabel"));
+    suppliersStatusLabel_->setWordWrap(true);
+    supplierLayout->addWidget(suppliersStatusLabel_);
+
+    supplierEditor_ = new QGroupBox(QStringLiteral("供应商信息"), supplierGroupBox_);
+    supplierEditor_->setObjectName(QStringLiteral("supplierEditor"));
+    auto* supplierForm = new QFormLayout(supplierEditor_);
+    supplierNameEdit_ = lineEdit(QStringLiteral("supplierNameEdit"), supplierEditor_);
+    supplierContactEdit_ = lineEdit(
+        QStringLiteral("supplierContactEdit"), supplierEditor_
+    );
+    supplierPhoneEdit_ = lineEdit(QStringLiteral("supplierPhoneEdit"), supplierEditor_);
+    supplierDefaultCheck_ = new QCheckBox(QStringLiteral("默认供应商"), supplierEditor_);
+    supplierDefaultCheck_->setObjectName(QStringLiteral("supplierDefaultCheck"));
+    supplierSaveButton_ = button(
+        QStringLiteral("保存"), QStringLiteral("supplierSaveButton"), supplierEditor_
+    );
+    supplierCancelButton_ = button(
+        QStringLiteral("取消"), QStringLiteral("supplierCancelButton"), supplierEditor_
+    );
+    supplierForm->addRow(QStringLiteral("供应商名称 *"), supplierNameEdit_);
+    supplierForm->addRow(QStringLiteral("联系人"), supplierContactEdit_);
+    supplierForm->addRow(QStringLiteral("电话"), supplierPhoneEdit_);
+    supplierForm->addRow(QString(), supplierDefaultCheck_);
+    auto* supplierButtons = new QHBoxLayout;
+    supplierButtons->addWidget(supplierSaveButton_);
+    supplierButtons->addWidget(supplierCancelButton_);
+    supplierForm->addRow(supplierButtons);
+    supplierEditor_->setEnabled(false);
+    supplierLayout->addWidget(supplierEditor_);
+    outer->addWidget(supplierGroupBox_);
+
+    // 价格分支（电线类按铜价区分）
+    priceGroupBox_ = new QGroupBox(QStringLiteral("价格分支"), materialEditor_);
+    priceGroupBox_->setObjectName(QStringLiteral("priceGroupBox"));
+    auto* priceLayout = new QVBoxLayout(priceGroupBox_);
+    pricesTable_ = new QTableWidget(priceGroupBox_);
+    pricesTable_->setObjectName(QStringLiteral("pricesTable"));
+    pricesTable_->setColumnCount(6);
+    pricesTable_->setHorizontalHeaderLabels({
+        QStringLiteral("铜价（元）"),
+        QStringLiteral("单价（元）"),
+        QStringLiteral("默认"),
+        QStringLiteral("状态"),
+        QStringLiteral("版本"),
+        QStringLiteral("备注"),
+    });
+    pricesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    pricesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    pricesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    pricesTable_->verticalHeader()->setVisible(false);
+    pricesTable_->horizontalHeader()->setStretchLastSection(true);
+    priceLayout->addWidget(pricesTable_);
+
+    auto* priceActions = new QHBoxLayout;
+    priceAddButton_ = button(
+        QStringLiteral("新建价格"), QStringLiteral("priceAddButton"), priceGroupBox_
+    );
+    priceEditButton_ = button(
+        QStringLiteral("编辑选中"), QStringLiteral("priceEditButton"), priceGroupBox_
+    );
+    priceToggleButton_ = button(
+        QStringLiteral("停用选中"), QStringLiteral("priceToggleButton"), priceGroupBox_
+    );
+    priceActions->addWidget(priceAddButton_);
+    priceActions->addWidget(priceEditButton_);
+    priceActions->addWidget(priceToggleButton_);
+    priceActions->addStretch();
+    priceLayout->addLayout(priceActions);
+
+    pricesStatusLabel_ = new QLabel(priceGroupBox_);
+    pricesStatusLabel_->setObjectName(QStringLiteral("pricesStatusLabel"));
+    pricesStatusLabel_->setWordWrap(true);
+    priceLayout->addWidget(pricesStatusLabel_);
+
+    priceEditor_ = new QGroupBox(QStringLiteral("价格信息"), priceGroupBox_);
+    priceEditor_->setObjectName(QStringLiteral("priceEditor"));
+    auto* priceForm = new QFormLayout(priceEditor_);
+    priceCopperEdit_ = lineEdit(QStringLiteral("priceCopperEdit"), priceEditor_);
+    priceCopperEdit_->setPlaceholderText(QStringLiteral("例如 7.20（元/千克）"));
+    priceUnitEdit_ = lineEdit(QStringLiteral("priceUnitEdit"), priceEditor_);
+    priceUnitEdit_->setPlaceholderText(QStringLiteral("例如 12.50"));
+    priceDefaultCheck_ = new QCheckBox(QStringLiteral("默认价格"), priceEditor_);
+    priceDefaultCheck_->setObjectName(QStringLiteral("priceDefaultCheck"));
+    priceSaveButton_ = button(
+        QStringLiteral("保存"), QStringLiteral("priceSaveButton"), priceEditor_
+    );
+    priceCancelButton_ = button(
+        QStringLiteral("取消"), QStringLiteral("priceCancelButton"), priceEditor_
+    );
+    priceForm->addRow(QStringLiteral("铜价（元）"), priceCopperEdit_);
+    priceForm->addRow(QStringLiteral("单价（元）*"), priceUnitEdit_);
+    priceForm->addRow(QString(), priceDefaultCheck_);
+    auto* priceButtons = new QHBoxLayout;
+    priceButtons->addWidget(priceSaveButton_);
+    priceButtons->addWidget(priceCancelButton_);
+    priceForm->addRow(priceButtons);
+    priceEditor_->setEnabled(false);
+    priceLayout->addWidget(priceEditor_);
+    outer->addWidget(priceGroupBox_);
+
     materialEditor_->setEnabled(false);
     return materialEditor_;
 }
@@ -357,6 +510,26 @@ void CatalogWidget::connectActions() {
     connect(materialToggleButton_, &QPushButton::clicked, this, &CatalogWidget::toggleSelectedMaterial);
     connect(materialSaveButton_, &QPushButton::clicked, this, &CatalogWidget::saveMaterial);
     connect(materialCancelButton_, &QPushButton::clicked, this, &CatalogWidget::cancelMaterialEdit);
+    connect(materialCopperCheck_, &QCheckBox::toggled, this, &CatalogWidget::applyCopperVisibility);
+
+    connect(supplierAddButton_, &QPushButton::clicked, this, &CatalogWidget::beginNewSupplier);
+    connect(supplierEditButton_, &QPushButton::clicked, this, &CatalogWidget::beginEditSupplier);
+    connect(supplierToggleButton_, &QPushButton::clicked, this, &CatalogWidget::toggleSelectedSupplier);
+    connect(supplierSaveButton_, &QPushButton::clicked, this, &CatalogWidget::saveSupplier);
+    connect(supplierCancelButton_, &QPushButton::clicked, this, &CatalogWidget::cancelSupplierEdit);
+    connect(suppliersTable_, &QTableWidget::itemSelectionChanged, this, [this]() {
+        if (selectedSupplierRow() >= 0) {
+            loadPrices();
+        }
+        updateBranchAccess();
+    });
+
+    connect(priceAddButton_, &QPushButton::clicked, this, &CatalogWidget::beginNewPrice);
+    connect(priceEditButton_, &QPushButton::clicked, this, &CatalogWidget::beginEditPrice);
+    connect(priceToggleButton_, &QPushButton::clicked, this, &CatalogWidget::toggleSelectedPrice);
+    connect(priceSaveButton_, &QPushButton::clicked, this, &CatalogWidget::savePrice);
+    connect(priceCancelButton_, &QPushButton::clicked, this, &CatalogWidget::cancelPriceEdit);
+    connect(pricesTable_, &QTableWidget::itemSelectionChanged, this, &CatalogWidget::updateBranchAccess);
 
     connect(customersSearchButton_, &QPushButton::clicked, this, [this]() {
         customerPage_ = 1;
@@ -403,6 +576,47 @@ void CatalogWidget::updateWriteAccess() {
             enabled ? QStringLiteral("停用选中项") : QStringLiteral("启用选中项")
         );
     }
+    updateBranchAccess();
+}
+
+void CatalogWidget::updateBranchAccess() {
+    const auto writable = canWrite();
+    const auto editing = materialEditing_ && editingMaterialId_ > 0;
+    const auto supplierSelected = selectedSupplierRow() >= 0;
+    const auto priceSelected = selectedPriceRow() >= 0;
+
+    supplierGroupBox_->setEnabled(writable && editing && !supplierBusy_ && !priceBusy_);
+    priceGroupBox_->setEnabled(
+        writable && editing && supplierSelected && !supplierBusy_ && !priceBusy_
+    );
+    supplierEditor_->setEnabled(writable && supplierEditing_ && !supplierBusy_);
+    priceEditor_->setEnabled(writable && priceEditing_ && !priceBusy_);
+
+    if (supplierSelected) {
+        const auto enabled = suppliers_.at(selectedSupplierRow())
+                                 .value(QStringLiteral("isEnabled"))
+                                 .toBool();
+        supplierToggleButton_->setText(
+            enabled ? QStringLiteral("停用选中") : QStringLiteral("启用选中")
+        );
+    }
+    if (priceSelected) {
+        const auto enabled = prices_.at(selectedPriceRow())
+                                 .value(QStringLiteral("isEnabled"))
+                                 .toBool();
+        priceToggleButton_->setText(
+            enabled ? QStringLiteral("停用选中") : QStringLiteral("启用选中")
+        );
+    }
+}
+
+void CatalogWidget::applyCopperVisibility() {
+    // 价格编辑器中的铜价输入仅对电线类物料可见
+    priceCopperEdit_->setVisible(materialCopperCheck_->isChecked());
+}
+
+bool CatalogWidget::branchesReady() const {
+    return sessionReady() && materialEditing_ && editingMaterialId_ > 0;
 }
 
 void CatalogWidget::applySessionState() {
@@ -415,14 +629,24 @@ void CatalogWidget::applySessionState() {
 
     materialEditing_ = false;
     customerEditing_ = false;
+    supplierEditing_ = false;
+    priceEditing_ = false;
     editingMaterialId_ = 0;
     editingMaterialRevision_ = 0;
+    editingSupplierId_ = 0;
+    editingSupplierRevision_ = 0;
+    editingPriceId_ = 0;
+    editingPriceRevision_ = 0;
     editingCustomerId_ = 0;
     editingCustomerRevision_ = 0;
     materials_.clear();
     customers_.clear();
+    suppliers_.clear();
+    prices_.clear();
     materialsTable_->setRowCount(0);
     customersTable_->setRowCount(0);
+    suppliersTable_->setRowCount(0);
+    pricesTable_->setRowCount(0);
     materialPage_ = 1;
     materialTotalPages_ = 0;
     materialTotal_ = 0;
@@ -431,6 +655,8 @@ void CatalogWidget::applySessionState() {
     customerTotal_ = 0;
     materialBusy_ = false;
     customerBusy_ = false;
+    supplierBusy_ = false;
+    priceBusy_ = false;
 
     const auto mustChangePassword =
         apiClient_ && apiClient_->isAuthenticated() &&
@@ -567,9 +793,10 @@ void CatalogWidget::showMaterials(const ApiResponse& response) {
         materialsTable_->setItem(row, 2, readOnlyItem(material.value(QStringLiteral("specification")).toString()));
         materialsTable_->setItem(row, 3, readOnlyItem(material.value(QStringLiteral("unit")).toString()));
         materialsTable_->setItem(row, 4, readOnlyItem(material.value(QStringLiteral("category")).toString()));
-        materialsTable_->setItem(row, 5, readOnlyItem(priceText(material.value(QStringLiteral("currentUnitPriceCents")).toInteger())));
-        materialsTable_->setItem(row, 6, readOnlyItem(material.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
-        materialsTable_->setItem(row, 7, readOnlyItem(QString::number(material.value(QStringLiteral("revision")).toInteger())));
+        materialsTable_->setItem(row, 5, readOnlyItem(material.value(QStringLiteral("isCopperBased")).toBool() ? QStringLiteral("是") : QStringLiteral("否")));
+        materialsTable_->setItem(row, 6, readOnlyItem(priceText(material.value(QStringLiteral("currentUnitPriceCents")).toInteger())));
+        materialsTable_->setItem(row, 7, readOnlyItem(material.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
+        materialsTable_->setItem(row, 8, readOnlyItem(QString::number(material.value(QStringLiteral("revision")).toInteger())));
     }
     materialPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt(1));
     materialTotalPages_ = qMax(0, response.body.value(QStringLiteral("totalPages")).toInt());
@@ -668,11 +895,21 @@ void CatalogWidget::beginNewMaterial() {
     materialSpecificationEdit_->clear();
     materialUnitEdit_->clear();
     materialCategoryEdit_->clear();
+    materialCopperCheck_->setChecked(false);
     materialPriceEdit_->clear();
     materialEnabledCheck_->setChecked(true);
     materialEditor_->setTitle(QStringLiteral("新增物料"));
+    suppliers_.clear();
+    suppliersTable_->setRowCount(0);
+    prices_.clear();
+    pricesTable_->setRowCount(0);
+    editingSupplierId_ = 0;
+    editingPriceId_ = 0;
+    supplierEditing_ = false;
+    priceEditing_ = false;
     updateWriteAccess();
     materialCodeEdit_->setFocus();
+    applyCopperVisibility();
 }
 
 void CatalogWidget::beginEditMaterial() {
@@ -689,10 +926,21 @@ void CatalogWidget::beginEditMaterial() {
     materialSpecificationEdit_->setText(material.value(QStringLiteral("specification")).toString());
     materialUnitEdit_->setText(material.value(QStringLiteral("unit")).toString());
     materialCategoryEdit_->setText(material.value(QStringLiteral("category")).toString());
+    materialCopperCheck_->setChecked(material.value(QStringLiteral("isCopperBased")).toBool());
     materialPriceEdit_->setText(priceText(material.value(QStringLiteral("currentUnitPriceCents")).toInteger()));
     materialEnabledCheck_->setChecked(material.value(QStringLiteral("isEnabled")).toBool());
     materialEditor_->setTitle(QStringLiteral("编辑物料"));
+    suppliers_.clear();
+    suppliersTable_->setRowCount(0);
+    prices_.clear();
+    pricesTable_->setRowCount(0);
+    editingSupplierId_ = 0;
+    editingPriceId_ = 0;
+    supplierEditing_ = false;
+    priceEditing_ = false;
     updateWriteAccess();
+    applyCopperVisibility();
+    loadSuppliers();
 }
 
 void CatalogWidget::saveMaterial() {
@@ -720,6 +968,7 @@ void CatalogWidget::saveMaterial() {
         {QStringLiteral("specification"), materialSpecificationEdit_->text().trimmed()},
         {QStringLiteral("unit"), unit},
         {QStringLiteral("category"), materialCategoryEdit_->text().trimmed()},
+        {QStringLiteral("isCopperBased"), materialCopperCheck_->isChecked()},
         {QStringLiteral("currentUnitPriceCents"), *cents},
         {QStringLiteral("isEnabled"), materialEnabledCheck_->isChecked()},
     };
@@ -738,11 +987,23 @@ void CatalogWidget::saveMaterial() {
             self->materialsStatusLabel_->setText(self->errorText(response));
             return;
         }
-        self->cancelMaterialEdit();
+        const auto created = response.body;
+        self->editingMaterialId_ = created.value(QStringLiteral("id")).toInteger();
+        self->editingMaterialRevision_ = created.value(QStringLiteral("revision")).toInteger();
         self->materialsStatusLabel_->setText(
             updating ? QStringLiteral("物料修改成功。") : QStringLiteral("物料新增成功。")
         );
+        if (!updating) {
+            // 新增后进入编辑态，可直接添加供应商分支
+            self->materialEditor_->setTitle(QStringLiteral("编辑物料"));
+            self->suppliers_.clear();
+            self->suppliersTable_->setRowCount(0);
+            self->prices_.clear();
+            self->pricesTable_->setRowCount(0);
+        }
+        self->updateWriteAccess();
         self->loadMaterials();
+        self->loadSuppliers();
     };
     if (updating) {
         apiClient_->put(
@@ -760,6 +1021,12 @@ void CatalogWidget::cancelMaterialEdit() {
     editingMaterialId_ = 0;
     editingMaterialRevision_ = 0;
     materialEditor_->setTitle(QStringLiteral("物料信息"));
+    suppliers_.clear();
+    suppliersTable_->setRowCount(0);
+    prices_.clear();
+    pricesTable_->setRowCount(0);
+    supplierEditing_ = false;
+    priceEditing_ = false;
     updateWriteAccess();
 }
 
@@ -792,6 +1059,414 @@ void CatalogWidget::toggleSelectedMaterial() {
                 return;
             }
             self->loadMaterials();
+        }
+    );
+}
+
+void CatalogWidget::loadSuppliers() {
+    if (!branchesReady() || supplierBusy_) {
+        return;
+    }
+    setSupplierBusy(true);
+    suppliersStatusLabel_->setText(QStringLiteral("正在加载供应商…"));
+    const auto path = QStringLiteral("/api/v1/materials/%1/suppliers")
+                          .arg(editingMaterialId_);
+    apiClient_->get(path, [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+        if (self) {
+            self->showSuppliers(response);
+        }
+    });
+}
+
+void CatalogWidget::showSuppliers(const ApiResponse& response) {
+    setSupplierBusy(false);
+    if (!branchesReady()) {
+        return;
+    }
+    if (!response.succeeded()) {
+        suppliersStatusLabel_->setText(errorText(response));
+        updateBranchAccess();
+        return;
+    }
+    const auto items = response.body.value(QStringLiteral("items"));
+    if (!items.isArray()) {
+        suppliersStatusLabel_->setText(QStringLiteral("服务器返回的供应商列表格式不正确。"));
+        updateBranchAccess();
+        return;
+    }
+
+    suppliers_.clear();
+    suppliersTable_->setRowCount(0);
+    for (const auto& value : items.toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const auto supplier = value.toObject();
+        const auto row = suppliersTable_->rowCount();
+        suppliers_.append(supplier);
+        suppliersTable_->insertRow(row);
+        suppliersTable_->setItem(row, 0, readOnlyItem(supplier.value(QStringLiteral("supplierName")).toString()));
+        suppliersTable_->setItem(row, 1, readOnlyItem(supplier.value(QStringLiteral("contactName")).toString()));
+        suppliersTable_->setItem(row, 2, readOnlyItem(supplier.value(QStringLiteral("phone")).toString()));
+        suppliersTable_->setItem(row, 3, readOnlyItem(supplier.value(QStringLiteral("isDefault")).toBool() ? QStringLiteral("是") : QStringLiteral("否")));
+        suppliersTable_->setItem(row, 4, readOnlyItem(supplier.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
+        suppliersTable_->setItem(row, 5, readOnlyItem(QString::number(supplier.value(QStringLiteral("revision")).toInteger())));
+    }
+    suppliersStatusLabel_->setText(QStringLiteral("该物料共 %1 个供应商。")
+                                       .arg(suppliers_.size()));
+    prices_.clear();
+    pricesTable_->setRowCount(0);
+    editingPriceId_ = 0;
+    priceEditing_ = false;
+    updateBranchAccess();
+}
+
+void CatalogWidget::beginNewSupplier() {
+    if (!canWrite() || !branchesReady()) {
+        return;
+    }
+    editingSupplierId_ = 0;
+    editingSupplierRevision_ = 0;
+    supplierEditing_ = true;
+    supplierNameEdit_->clear();
+    supplierContactEdit_->clear();
+    supplierPhoneEdit_->clear();
+    supplierDefaultCheck_->setChecked(false);
+    supplierEditor_->setTitle(QStringLiteral("新增供应商"));
+    updateBranchAccess();
+    supplierNameEdit_->setFocus();
+}
+
+void CatalogWidget::beginEditSupplier() {
+    const auto row = selectedSupplierRow();
+    if (!canWrite() || !branchesReady() || row < 0) {
+        return;
+    }
+    const auto supplier = suppliers_.at(row);
+    editingSupplierId_ = supplier.value(QStringLiteral("id")).toInteger();
+    editingSupplierRevision_ = supplier.value(QStringLiteral("revision")).toInteger();
+    supplierEditing_ = true;
+    supplierNameEdit_->setText(supplier.value(QStringLiteral("supplierName")).toString());
+    supplierContactEdit_->setText(supplier.value(QStringLiteral("contactName")).toString());
+    supplierPhoneEdit_->setText(supplier.value(QStringLiteral("phone")).toString());
+    supplierDefaultCheck_->setChecked(supplier.value(QStringLiteral("isDefault")).toBool());
+    supplierEditor_->setTitle(QStringLiteral("编辑供应商"));
+    updateBranchAccess();
+}
+
+void CatalogWidget::saveSupplier() {
+    if (!canWrite() || !branchesReady() || !supplierEditing_ || supplierBusy_) {
+        return;
+    }
+    const auto name = supplierNameEdit_->text().trimmed();
+    if (name.isEmpty()) {
+        suppliersStatusLabel_->setText(QStringLiteral("请填写供应商名称。"));
+        return;
+    }
+    QJsonObject body{
+        {QStringLiteral("supplierName"), name},
+        {QStringLiteral("contactName"), supplierContactEdit_->text().trimmed()},
+        {QStringLiteral("phone"), supplierPhoneEdit_->text().trimmed()},
+        {QStringLiteral("isDefault"), supplierDefaultCheck_->isChecked()},
+        {QStringLiteral("isEnabled"), true},
+    };
+    const auto updating = editingSupplierId_ > 0;
+    if (updating) {
+        body.insert(QStringLiteral("revision"), editingSupplierRevision_);
+    }
+    setSupplierBusy(true);
+    suppliersStatusLabel_->setText(QStringLiteral("正在保存供应商…"));
+    const auto callback = [self = QPointer<CatalogWidget>(this), updating](ApiResponse response) {
+        if (!self) {
+            return;
+        }
+        self->setSupplierBusy(false);
+        if (!response.succeeded()) {
+            self->suppliersStatusLabel_->setText(self->errorText(response));
+            return;
+        }
+        self->cancelSupplierEdit();
+        self->suppliersStatusLabel_->setText(
+            updating ? QStringLiteral("供应商修改成功。")
+                     : QStringLiteral("供应商新增成功，可继续新建第二、第三…个供应商。")
+        );
+        self->loadSuppliers();
+    };
+    const auto path = updating
+                          ? QStringLiteral("/api/v1/materials/%1/suppliers/%2")
+                                .arg(editingMaterialId_)
+                                .arg(editingSupplierId_)
+                          : QStringLiteral("/api/v1/materials/%1/suppliers")
+                                .arg(editingMaterialId_);
+    if (updating) {
+        apiClient_->put(path, body, callback);
+    } else {
+        apiClient_->post(path, body, callback);
+    }
+}
+
+void CatalogWidget::cancelSupplierEdit() {
+    supplierEditing_ = false;
+    editingSupplierId_ = 0;
+    editingSupplierRevision_ = 0;
+    supplierEditor_->setTitle(QStringLiteral("供应商信息"));
+    updateBranchAccess();
+}
+
+void CatalogWidget::toggleSelectedSupplier() {
+    const auto row = selectedSupplierRow();
+    if (!canWrite() || !branchesReady() || row < 0 || supplierBusy_) {
+        return;
+    }
+    const auto supplier = suppliers_.at(row);
+    const auto enabled = supplier.value(QStringLiteral("isEnabled")).toBool();
+    const QJsonObject body{
+        {QStringLiteral("revision"), supplier.value(QStringLiteral("revision")).toInteger()},
+        {QStringLiteral("isEnabled"), !enabled},
+    };
+    setSupplierBusy(true);
+    suppliersStatusLabel_->setText(
+        enabled ? QStringLiteral("正在停用供应商…") : QStringLiteral("正在启用供应商…")
+    );
+    apiClient_->patch(
+        QStringLiteral("/api/v1/materials/%1/suppliers/%2/enabled")
+            .arg(editingMaterialId_)
+            .arg(supplier.value(QStringLiteral("id")).toInteger()),
+        body,
+        [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+            if (!self) {
+                return;
+            }
+            self->setSupplierBusy(false);
+            if (!response.succeeded()) {
+                self->suppliersStatusLabel_->setText(self->errorText(response));
+                return;
+            }
+            self->loadSuppliers();
+        }
+    );
+}
+
+void CatalogWidget::loadPrices() {
+    const auto row = selectedSupplierRow();
+    if (!branchesReady() || row < 0 || priceBusy_ || supplierBusy_) {
+        return;
+    }
+    const auto supplier = suppliers_.at(row);
+    const auto supplierId = supplier.value(QStringLiteral("id")).toInteger();
+    setPriceBusy(true);
+    pricesStatusLabel_->setText(QStringLiteral("正在加载价格…"));
+    const auto path = QStringLiteral("/api/v1/suppliers/%1/prices").arg(supplierId);
+    apiClient_->get(path, [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+        if (self) {
+            self->showPrices(response);
+        }
+    });
+}
+
+void CatalogWidget::showPrices(const ApiResponse& response) {
+    setPriceBusy(false);
+    if (!branchesReady()) {
+        return;
+    }
+    if (!response.succeeded()) {
+        pricesStatusLabel_->setText(errorText(response));
+        updateBranchAccess();
+        return;
+    }
+    const auto items = response.body.value(QStringLiteral("items"));
+    if (!items.isArray()) {
+        pricesStatusLabel_->setText(QStringLiteral("服务器返回的价格列表格式不正确。"));
+        updateBranchAccess();
+        return;
+    }
+
+    prices_.clear();
+    pricesTable_->setRowCount(0);
+    const auto copperBased = materialCopperCheck_->isChecked();
+    for (const auto& value : items.toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const auto price = value.toObject();
+        const auto row = pricesTable_->rowCount();
+        prices_.append(price);
+        pricesTable_->insertRow(row);
+        const auto copper = price.value(QStringLiteral("copperPriceCents"));
+        const auto copperText =
+            copperBased && !copper.isNull()
+                ? priceText(copper.toInteger())
+                : QStringLiteral("—");
+        pricesTable_->setItem(row, 0, readOnlyItem(copperText));
+        pricesTable_->setItem(row, 1, readOnlyItem(priceText(price.value(QStringLiteral("unitPriceCents")).toInteger())));
+        pricesTable_->setItem(row, 2, readOnlyItem(price.value(QStringLiteral("isDefault")).toBool() ? QStringLiteral("是") : QStringLiteral("否")));
+        pricesTable_->setItem(row, 3, readOnlyItem(price.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
+        pricesTable_->setItem(row, 4, readOnlyItem(QString::number(price.value(QStringLiteral("revision")).toInteger())));
+        pricesTable_->setItem(row, 5, readOnlyItem(copperBased ? QStringLiteral("按铜价") : QStringLiteral("普通")));
+    }
+    pricesStatusLabel_->setText(QStringLiteral("该供应商共 %1 条价格。")
+                                    .arg(prices_.size()));
+    updateBranchAccess();
+}
+
+void CatalogWidget::beginNewPrice() {
+    if (!canWrite() || !branchesReady() || selectedSupplierRow() < 0) {
+        return;
+    }
+    editingPriceId_ = 0;
+    editingPriceRevision_ = 0;
+    priceEditing_ = true;
+    priceCopperEdit_->clear();
+    priceUnitEdit_->clear();
+    priceDefaultCheck_->setChecked(false);
+    priceEditor_->setTitle(QStringLiteral("新增价格"));
+    updateBranchAccess();
+    applyCopperVisibility();
+    if (materialCopperCheck_->isChecked()) {
+        priceCopperEdit_->setFocus();
+    } else {
+        priceUnitEdit_->setFocus();
+    }
+}
+
+void CatalogWidget::beginEditPrice() {
+    const auto row = selectedPriceRow();
+    if (!canWrite() || !branchesReady() || row < 0) {
+        return;
+    }
+    const auto price = prices_.at(row);
+    editingPriceId_ = price.value(QStringLiteral("id")).toInteger();
+    editingPriceRevision_ = price.value(QStringLiteral("revision")).toInteger();
+    priceEditing_ = true;
+    const auto copper = price.value(QStringLiteral("copperPriceCents"));
+    if (materialCopperCheck_->isChecked() && !copper.isNull()) {
+        priceCopperEdit_->setText(priceText(copper.toInteger()));
+    } else {
+        priceCopperEdit_->clear();
+    }
+    priceUnitEdit_->setText(priceText(price.value(QStringLiteral("unitPriceCents")).toInteger()));
+    priceDefaultCheck_->setChecked(price.value(QStringLiteral("isDefault")).toBool());
+    priceEditor_->setTitle(QStringLiteral("编辑价格"));
+    updateBranchAccess();
+    applyCopperVisibility();
+}
+
+void CatalogWidget::savePrice() {
+    if (!canWrite() || !branchesReady() || !priceEditing_ || priceBusy_) {
+        return;
+    }
+    const auto row = selectedSupplierRow();
+    if (row < 0) {
+        return;
+    }
+    const auto supplierId =
+        suppliers_.at(row).value(QStringLiteral("id")).toInteger();
+
+    QJsonObject body;
+    if (materialCopperCheck_->isChecked()) {
+        const auto copper = parsePrice(priceCopperEdit_->text());
+        if (!copper.has_value()) {
+            pricesStatusLabel_->setText(
+                QStringLiteral("电线类物料请填写铜价，例如 7.20。")
+            );
+            return;
+        }
+        body.insert(QStringLiteral("copperPriceCents"), *copper);
+    } else {
+        body.insert(QStringLiteral("copperPriceCents"), QJsonValue::Null);
+    }
+    const auto cents = parsePrice(priceUnitEdit_->text());
+    if (!cents.has_value()) {
+        pricesStatusLabel_->setText(
+            QStringLiteral("单价请输入非负金额，最多保留两位小数，例如 12.50。")
+        );
+        return;
+    }
+    body.insert(QStringLiteral("unitPriceCents"), *cents);
+    body.insert(QStringLiteral("isDefault"), priceDefaultCheck_->isChecked());
+    body.insert(QStringLiteral("isEnabled"), true);
+
+    const auto updating = editingPriceId_ > 0;
+    if (updating) {
+        body.insert(QStringLiteral("revision"), editingPriceRevision_);
+    }
+    setPriceBusy(true);
+    pricesStatusLabel_->setText(QStringLiteral("正在保存价格…"));
+    const auto callback = [self = QPointer<CatalogWidget>(this), updating](ApiResponse response) {
+        if (!self) {
+            return;
+        }
+        self->setPriceBusy(false);
+        if (!response.succeeded()) {
+            self->pricesStatusLabel_->setText(self->errorText(response));
+            return;
+        }
+        self->cancelPriceEdit();
+        self->pricesStatusLabel_->setText(
+            updating ? QStringLiteral("价格修改成功。")
+                     : QStringLiteral(
+                           "价格新增成功，可继续为同一供应商新建不同铜价的价格。"
+                       )
+        );
+        self->loadPrices();
+    };
+    const auto path = updating
+                          ? QStringLiteral("/api/v1/suppliers/%1/prices/%2")
+                                .arg(supplierId)
+                                .arg(editingPriceId_)
+                          : QStringLiteral("/api/v1/suppliers/%1/prices")
+                                .arg(supplierId);
+    if (updating) {
+        apiClient_->put(path, body, callback);
+    } else {
+        apiClient_->post(path, body, callback);
+    }
+}
+
+void CatalogWidget::cancelPriceEdit() {
+    priceEditing_ = false;
+    editingPriceId_ = 0;
+    editingPriceRevision_ = 0;
+    priceEditor_->setTitle(QStringLiteral("价格信息"));
+    updateBranchAccess();
+}
+
+void CatalogWidget::toggleSelectedPrice() {
+    const auto row = selectedPriceRow();
+    if (!canWrite() || !branchesReady() || row < 0 || priceBusy_) {
+        return;
+    }
+    const auto supplierRow = selectedSupplierRow();
+    if (supplierRow < 0) {
+        return;
+    }
+    const auto supplierId =
+        suppliers_.at(supplierRow).value(QStringLiteral("id")).toInteger();
+    const auto price = prices_.at(row);
+    const auto enabled = price.value(QStringLiteral("isEnabled")).toBool();
+    const QJsonObject body{
+        {QStringLiteral("revision"), price.value(QStringLiteral("revision")).toInteger()},
+        {QStringLiteral("isEnabled"), !enabled},
+    };
+    setPriceBusy(true);
+    pricesStatusLabel_->setText(
+        enabled ? QStringLiteral("正在停用价格…") : QStringLiteral("正在启用价格…")
+    );
+    apiClient_->patch(
+        QStringLiteral("/api/v1/suppliers/%1/prices/%2/enabled")
+            .arg(supplierId)
+            .arg(price.value(QStringLiteral("id")).toInteger()),
+        body,
+        [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+            if (!self) {
+                return;
+            }
+            self->setPriceBusy(false);
+            if (!response.succeeded()) {
+                self->pricesStatusLabel_->setText(self->errorText(response));
+                return;
+            }
+            self->loadPrices();
         }
     );
 }
@@ -895,6 +1570,22 @@ int CatalogWidget::selectedMaterialRow() const {
     return rows.first().row();
 }
 
+int CatalogWidget::selectedSupplierRow() const {
+    const auto rows = suppliersTable_->selectionModel()->selectedRows();
+    if (rows.isEmpty() || rows.first().row() >= suppliers_.size()) {
+        return -1;
+    }
+    return rows.first().row();
+}
+
+int CatalogWidget::selectedPriceRow() const {
+    const auto rows = pricesTable_->selectionModel()->selectedRows();
+    if (rows.isEmpty() || rows.first().row() >= prices_.size()) {
+        return -1;
+    }
+    return rows.first().row();
+}
+
 int CatalogWidget::selectedCustomerRow() const {
     const auto rows = customersTable_->selectionModel()->selectedRows();
     if (rows.isEmpty() || rows.first().row() >= customers_.size()) {
@@ -953,6 +1644,16 @@ void CatalogWidget::setCustomerBusy(bool busy) {
     customersRefreshButton_->setEnabled(ready && !busy);
     updateCustomerPaging();
     updateWriteAccess();
+}
+
+void CatalogWidget::setSupplierBusy(bool busy) {
+    supplierBusy_ = busy;
+    updateBranchAccess();
+}
+
+void CatalogWidget::setPriceBusy(bool busy) {
+    priceBusy_ = busy;
+    updateBranchAccess();
 }
 
 } // namespace manage::desktop
