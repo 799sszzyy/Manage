@@ -24,8 +24,12 @@ $desktop = Join-Path $releaseDirectory 'manage-desktop.exe'
 $server = Join-Path $releaseDirectory 'manage-server.exe'
 $windeployqt = Join-Path $QtDirectory 'bin\windeployqt.exe'
 $mysqlLibrary = Join-Path $MySqlRoot 'lib\libmysql.dll'
+$mysqlRuntimeLibraries = @(
+    (Join-Path $MySqlRoot 'bin\libssl-3-x64.dll'),
+    (Join-Path $MySqlRoot 'bin\libcrypto-3-x64.dll')
+)
 $qmysql = Join-Path $QtDirectory 'plugins\sqldrivers\qsqlmysql.dll'
-foreach ($path in @($desktop, $server, $windeployqt, $mysqlLibrary, $qmysql)) {
+foreach ($path in @($desktop, $server, $windeployqt, $mysqlLibrary, $qmysql) + $mysqlRuntimeLibraries) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Packaging dependency not found: $path"
     }
@@ -46,6 +50,7 @@ $sqlDriverDirectory = Join-Path $binDirectory 'sqldrivers'
 New-Item -ItemType Directory -Path $sqlDriverDirectory -Force | Out-Null
 Copy-Item -LiteralPath $qmysql -Destination $sqlDriverDirectory -Force
 Copy-Item -LiteralPath $mysqlLibrary -Destination $binDirectory -Force
+Copy-Item -LiteralPath $mysqlRuntimeLibraries -Destination $binDirectory -Force
 
 Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' |
     Where-Object Name -ne 'Package-Manage.ps1' |
