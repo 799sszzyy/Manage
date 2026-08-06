@@ -110,6 +110,8 @@ struct PreparedLine final {
     qint64 unitPriceCents{};
     qint64 subtotalCents{};
     QString notes;
+    // 铜价档快照（可选）：电线类物料报价时选定的铜价（元/吨）。
+    std::optional<qint64> copperPriceCents;
 };
 
 // 报价工序步骤快照：名称 + 单人工时（分钟）。
@@ -383,6 +385,7 @@ QuoteResult<PreparedDraft> prepareDraft(
         line.quantityMicros = input.quantityMicros;
         line.unitPriceCents = input.unitPriceCents;
         line.notes = nonNull(input.notes);
+        line.copperPriceCents = input.copperPriceCents;
         prepared.items.push_back(std::move(line));
         calculation.lines.push_back({
             prepared.items.back().code.toStdString(),
@@ -472,9 +475,9 @@ QuoteResult<bool> insertPreparedLines(
         "INSERT INTO quote_items (quote_id, line_no, material_id, "
         "material_code_snapshot, material_name_snapshot, "
         "specification_snapshot, unit_snapshot, quantity_micros, "
-        "unit_price_cents, subtotal_cents, notes) VALUES "
+        "unit_price_cents, copper_price_cents, subtotal_cents, notes) VALUES "
         "(:quoteId, :lineNo, :materialId, :code, :name, :specification, "
-        ":unit, :quantity, :unitPrice, :subtotal, :notes)"
+        ":unit, :quantity, :unitPrice, :copperPrice, :subtotal, :notes)"
     ));
     for (std::size_t index = 0; index < lines.size(); ++index) {
         const auto& line = lines[index];
@@ -487,6 +490,12 @@ QuoteResult<bool> insertPreparedLines(
         query.bindValue(QStringLiteral(":unit"), line.unit);
         query.bindValue(QStringLiteral(":quantity"), idValue(line.quantityMicros));
         query.bindValue(QStringLiteral(":unitPrice"), idValue(line.unitPriceCents));
+        query.bindValue(
+            QStringLiteral(":copperPrice"),
+            line.copperPriceCents.has_value()
+                ? QVariant::fromValue<qlonglong>(*line.copperPriceCents)
+                : QVariant(QVariant::LongLong)
+        );
         query.bindValue(QStringLiteral(":subtotal"), idValue(line.subtotalCents));
         query.bindValue(QStringLiteral(":notes"), line.notes);
         if (!query.exec()) {
@@ -621,7 +630,8 @@ QuoteResult<QuoteDocument> loadDocument(QSqlDatabase database, qint64 id) {
     items.prepare(QStringLiteral(
         "SELECT id, line_no, material_id, material_code_snapshot, "
         "material_name_snapshot, specification_snapshot, unit_snapshot, "
-        "quantity_micros, unit_price_cents, subtotal_cents, notes "
+        "quantity_micros, unit_price_cents, copper_price_cents, "
+        "subtotal_cents, notes "
         "FROM quote_items WHERE quote_id = :quoteId ORDER BY line_no"
     ));
     items.bindValue(QStringLiteral(":quoteId"), idValue(id));
@@ -641,8 +651,13 @@ QuoteResult<QuoteDocument> loadDocument(QSqlDatabase database, qint64 id) {
         item.unit = items.value(6).toString();
         item.quantityMicros = items.value(7).toLongLong();
         item.unitPriceCents = items.value(8).toLongLong();
-        item.subtotalCents = items.value(9).toLongLong();
-        item.notes = items.value(10).toString();
+        if (items.value(9).isNull()) {
+            item.copperPriceCents.reset();
+        } else {
+            item.copperPriceCents = items.value(9).toLongLong();
+        }
+        item.subtotalCents = items.value(10).toLongLong();
+        item.notes = items.value(11).toString();
         document.items.push_back(std::move(item));
     }
 
@@ -1254,6 +1269,7 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
             item.unitPriceCents,
             item.subtotalCents,
             item.notes,
+            item.copperPriceCents,
         });
     }
     const auto lines = insertPreparedLines(database_, quoteId, copiedLines);

@@ -396,6 +396,7 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
         {6, "006_engineer_responsibility"},
         {7, "007_task_dispatch"},
         {8, "008_delivery_date"},
+        {9, "009_quote_copper_tier"},
     };
 
     QList<Migration> migrations;
