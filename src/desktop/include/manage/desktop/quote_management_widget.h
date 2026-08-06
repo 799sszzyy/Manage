@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class QComboBox;
+class QDateEdit;
 class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
@@ -46,6 +47,8 @@ private:
     void loadBoms();
     void loadMaterials();
     void loadProcessSteps();
+    // 工程师责任制：加载可指派的工程师账号候选。
+    void loadEngineers();
     void addProcessStep();
     void removeProcessStep();
     void loadSelectedBom(bool forceReload = false);
@@ -106,6 +109,9 @@ private:
     QLabel* stateLabel_{};
     QLabel* revisionLabel_{};
     QComboBox* customerCombo_{};
+    // 工程师责任制：负责工程师下拉与销售预测的 BOM 构建完成日期。
+    QComboBox* engineerCombo_{};
+    QDateEdit* expectedDateEdit_{};
     QComboBox* bomCombo_{};
     QDoubleSpinBox* bomQuantitySpin_{};
     QLabel* bomLeadDaysLabel_{};

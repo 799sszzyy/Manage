@@ -4,6 +4,9 @@
 
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QDate>
+#include <QDateEdit>
+#include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -220,6 +223,15 @@ void QuoteManagementWidget::buildUi() {
     form->addRow(QStringLiteral("状态"), stateLabel_);
     form->addRow(QStringLiteral("版本"), revisionLabel_);
     form->addRow(QStringLiteral("客户"), customerCombo_);
+    // 工程师责任制：销售指派负责工程师并给出预测的 BOM 构建完成日期。
+    engineerCombo_ = named(new QComboBox(editorGroup_), "quoteEngineerCombo");
+    engineerCombo_->addItem(QStringLiteral("（未指派）"), qint64{});
+    expectedDateEdit_ = named(new QDateEdit(editorGroup_), "quoteExpectedDateEdit");
+    expectedDateEdit_->setCalendarPopup(true);
+    expectedDateEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    expectedDateEdit_->setDate(QDate::currentDate().addDays(7));
+    form->addRow(QStringLiteral("负责工程师"), engineerCombo_);
+    form->addRow(QStringLiteral("预测 BOM 完成日期（销售设置）"), expectedDateEdit_);
     form->addRow(QStringLiteral("关联 BOM（报价基础）"), bomCombo_);
     form->addRow(QStringLiteral("BOM 销售数量"), bomQuantitySpin_);
     bomLeadDaysLabel_ = named(new QLabel(QStringLiteral("-"), editorGroup_), "quoteBomLeadDaysLabel");
@@ -443,7 +455,7 @@ void QuoteManagementWidget::updateControls() {
     const auto editable = write && editing_ && currentStatus_ == QStringLiteral("draft") &&
                           !busy_ && !loadingBom_;
     const QList<QWidget*> editorFields{
-        customerCombo_, bomCombo_, bomQuantitySpin_, laborCountSpin_, materialSearchEdit_, materialSearchButton_, materialCombo_, addItemButton_, removeItemButton_,
+        customerCombo_, engineerCombo_, expectedDateEdit_, bomCombo_, bomQuantitySpin_, laborCountSpin_, materialSearchEdit_, materialSearchButton_, materialCombo_, addItemButton_, removeItemButton_,
         processCombo_, addProcessButton_, removeProcessButton_,
         freightSpin_, otherFeesSpin_, markupSpin_, taxSpin_, notesEdit_,
     };
@@ -566,6 +578,35 @@ void QuoteManagementWidget::loadLookups() {
     loadBoms();
     loadMaterials();
     loadProcessSteps();
+    loadEngineers();
+}
+
+void QuoteManagementWidget::loadEngineers() {
+    apiClient_->get(QStringLiteral("/api/v1/users/engineers"),
+        [self = QPointer<QuoteManagementWidget>(this)](ApiResponse response) {
+            if (!self || !response.succeeded()) return;
+            const auto selected = self->engineerCombo_->currentData(kIdRole).toLongLong();
+            const QSignalBlocker blocker(self->engineerCombo_);
+            self->engineerCombo_->clear();
+            self->engineerCombo_->addItem(QStringLiteral("（未指派）"), qint64{});
+            for (const auto& value : response.body.value(QStringLiteral("items")).toArray()) {
+                const auto user = value.toObject();
+                const auto role = user.value(QStringLiteral("role")).toString();
+                const auto roleLabel = role == QStringLiteral("admin")
+                    ? QStringLiteral("管理员")
+                    : role == QStringLiteral("quoter") ? QStringLiteral("报价员")
+                                                       : QStringLiteral("只读用户");
+                self->engineerCombo_->addItem(
+                    QStringLiteral("%1（%2）[%3]").arg(
+                        user.value(QStringLiteral("displayName")).toString(),
+                        user.value(QStringLiteral("username")).toString(),
+                        roleLabel
+                    ),
+                    user.value(QStringLiteral("id")).toInteger()
+                );
+            }
+            selectId(self->engineerCombo_, selected, {});
+        });
 }
 
 void QuoteManagementWidget::loadCustomers() {
@@ -908,6 +949,7 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
             {QStringLiteral("laborMinutes"), minutes},
         });
     }
+    const auto engineerId = engineerCombo_->currentData(kIdRole).toLongLong();
     QJsonObject body{
         {QStringLiteral("customerId"), customerId},
         {QStringLiteral("freightCents"), qRound64(freightSpin_->value() * 100.0)},
@@ -919,6 +961,12 @@ QJsonObject QuoteManagementWidget::editorPayload(bool includeRevision, bool* ok)
         {QStringLiteral("bomQuantityMicros"), bomQuantityMicros},
         {QStringLiteral("laborCount"), laborCountSpin_->value()},
         {QStringLiteral("processSteps"), processSteps},
+        // 工程师责任制：指派工程师 + 预测 BOM 构建完成时间（未指派时传 null）。
+        {QStringLiteral("engineerId"), engineerId > 0
+             ? QJsonValue(engineerId)
+             : QJsonValue(QJsonValue::Null)},
+        {QStringLiteral("expectedCompletionAt"),
+             QDateTime(expectedDateEdit_->date(), QTime(0, 0)).toString(Qt::ISODateWithMs)},
     };
     body.insert(QStringLiteral("bomTemplateId"), bomId);
     if (includeRevision) body.insert(QStringLiteral("revision"), currentRevision_);
@@ -1014,6 +1062,17 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
     revisionLabel_->setText(QString::number(currentRevision_));
     selectId(customerCombo_, quote.value(QStringLiteral("customerId")).toInteger(), quote.value(QStringLiteral("customerName")).toString());
     {
+        const QSignalBlocker blocker(engineerCombo_);
+        selectId(engineerCombo_, quote.value(QStringLiteral("assignedEngineerId")).toInteger(), {});
+    }
+    {
+        const auto expectedText = quote.value(QStringLiteral("expectedCompletionAt")).toString();
+        const auto expected = QDateTime::fromString(expectedText, Qt::ISODateWithMs);
+        if (expected.isValid()) {
+            expectedDateEdit_->setDate(expected.toLocalTime().date());
+        }
+    }
+    {
         const QSignalBlocker blocker(bomCombo_);
         selectId(bomCombo_, quote.value(QStringLiteral("bomTemplateId")).toInteger(), quote.value(QStringLiteral("bomName")).toString());
         loadedBomId_ = bomCombo_->currentData(kIdRole).toLongLong();
@@ -1071,6 +1130,11 @@ void QuoteManagementWidget::clearEditor() {
     stateLabel_->setText(QStringLiteral("-"));
     revisionLabel_->setText(QStringLiteral("-"));
     if (customerCombo_->count()) customerCombo_->setCurrentIndex(0);
+    {
+        const QSignalBlocker blocker(engineerCombo_);
+        if (engineerCombo_->count()) engineerCombo_->setCurrentIndex(0);
+    }
+    expectedDateEdit_->setDate(QDate::currentDate().addDays(7));
     {
         const QSignalBlocker blocker(bomCombo_);
         if (bomCombo_->count()) bomCombo_->setCurrentIndex(0);
