@@ -61,6 +61,9 @@ struct MaterialSupplier final {
     QString phone;
     bool isDefault{false};
     bool isEnabled{true};
+    // 该供应商对当前物料的交货周期（天），用于计算 BOM 交期。
+    // 新增字段置于末尾以兼容聚合初始化。
+    int leadDays{0};
     std::uint32_t revision{1};
     QDateTime createdAt;
     QDateTime updatedAt;
@@ -72,6 +75,8 @@ struct MaterialSupplierDraft final {
     QString phone;
     bool isDefault{false};
     bool isEnabled{true};
+    // 交货周期（天），新增字段置于末尾以兼容聚合初始化。
+    int leadDays{0};
 };
 
 // 供应商下的价格分支：电线类物料按铜价区分，普通物料铜价为 null。

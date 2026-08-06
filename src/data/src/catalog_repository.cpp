@@ -16,7 +16,7 @@ constexpr auto kCustomerColumns =
     "id, name, contact_name, phone, address, notes, revision, created_at, updated_at";
 constexpr auto kMaterialSupplierColumns =
     "id, material_id, supplier_name, contact_name, phone, is_default, "
-    "is_enabled, revision, created_at, updated_at";
+    "is_enabled, lead_days, revision, created_at, updated_at";
 constexpr auto kMaterialPriceColumns =
     "id, material_supplier_id, copper_price_cents, unit_price_cents, is_default, "
     "is_enabled, revision, created_at, updated_at";
@@ -47,9 +47,10 @@ MaterialSupplier readMaterialSupplier(const QSqlQuery& query) {
     supplier.phone = query.value(4).toString();
     supplier.isDefault = query.value(5).toBool();
     supplier.isEnabled = query.value(6).toBool();
-    supplier.revision = query.value(7).toUInt();
-    supplier.createdAt = query.value(8).toDateTime();
-    supplier.updatedAt = query.value(9).toDateTime();
+    supplier.leadDays = query.value(7).toInt();
+    supplier.revision = query.value(8).toUInt();
+    supplier.createdAt = query.value(9).toDateTime();
+    supplier.updatedAt = query.value(10).toDateTime();
     return supplier;
 }
 
@@ -116,6 +117,7 @@ void bindMaterialSupplierDraft(QSqlQuery* query, const MaterialSupplierDraft& dr
     query->bindValue(QStringLiteral(":phone"), sqlString(draft.phone));
     query->bindValue(QStringLiteral(":isDefault"), draft.isDefault);
     query->bindValue(QStringLiteral(":isEnabled"), draft.isEnabled);
+    query->bindValue(QStringLiteral(":leadDays"), draft.leadDays);
 }
 
 void bindMaterialPriceDraft(QSqlQuery* query, const MaterialPriceDraft& draft) {
@@ -616,8 +618,8 @@ bool MySqlCatalogRepository::createMaterialSupplier(
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "INSERT INTO material_suppliers "
-        "(material_id, supplier_name, contact_name, phone, is_default, is_enabled) "
-        "VALUES (:materialId, :supplierName, :contactName, :phone, :isDefault, :isEnabled)"
+        "(material_id, supplier_name, contact_name, phone, is_default, is_enabled, lead_days) "
+        "VALUES (:materialId, :supplierName, :contactName, :phone, :isDefault, :isEnabled, :leadDays)"
     ));
     query.bindValue(
         QStringLiteral(":materialId"),
@@ -643,7 +645,7 @@ bool MySqlCatalogRepository::updateMaterialSupplier(
     query.prepare(QStringLiteral(
         "UPDATE material_suppliers SET supplier_name = :supplierName, "
         "contact_name = :contactName, phone = :phone, is_default = :isDefault, "
-        "is_enabled = :isEnabled, revision = revision + 1 "
+        "is_enabled = :isEnabled, lead_days = :leadDays, revision = revision + 1 "
         "WHERE id = :id AND revision = :revision"
     ));
     bindMaterialSupplierDraft(&query, draft);

@@ -138,6 +138,12 @@ std::optional<CatalogError> CatalogService::validateMaterialSupplier(
             QStringLiteral("phone must not exceed 64 characters")
         );
     }
+    if (draft->leadDays < 0 || draft->leadDays > 36'500) {
+        return validationError(
+            QStringLiteral("leadDays"),
+            QStringLiteral("leadDays must be between 0 and 36500 days")
+        );
+    }
     return std::nullopt;
 }
 

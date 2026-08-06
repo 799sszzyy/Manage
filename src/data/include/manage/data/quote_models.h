@@ -48,11 +48,21 @@ struct QuoteLineInput final {
     QString notes;
 };
 
+// 报价单上的一道工序步骤：名称快照 + 单人工时（分钟）。
+struct QuoteProcessInput final {
+    QString stepName;
+    qint64 laborMinutes{};
+};
+
 struct QuoteDraft final {
     qint64 customerId{};
     std::optional<qint64> bomTemplateId;
     // Fixed-point BOM sales quantity: 1'000'000 means one BOM.
     qint64 bomQuantityMicros{1'000'000};
+    // 产品劳动人数：工序总工时除以该人数得到并行生产的工作天数。
+    int laborCount{1};
+    // 手动选用的工序步骤（可来自工序库，也可直接录入）。
+    std::vector<QuoteProcessInput> processSteps;
     qint64 freightCents{};
     qint64 otherFeesCents{};
     int markupBasisPoints{};
@@ -75,6 +85,14 @@ struct QuoteItemSnapshot final {
     QString notes;
 };
 
+// 报价单上已冻结的工序步骤快照。
+struct QuoteProcessSnapshot final {
+    qint64 id{};
+    int lineNo{};
+    QString stepName;
+    qint64 laborMinutes{};
+};
+
 struct QuoteSummary final {
     qint64 id{};
     QString quoteNumber;
@@ -82,6 +100,11 @@ struct QuoteSummary final {
     QString customerName;
     std::optional<qint64> bomTemplateId;
     qint64 bomQuantityMicros{1'000'000};
+    // 快照：BOM 交期（天）、劳动人数、工序总工时（单人分钟）、预计发货交期（天）。
+    int bomLeadDays{0};
+    int laborCount{1};
+    qint64 processTotalMinutes{0};
+    int estimatedDeliveryDays{0};
     QuoteStatus status{QuoteStatus::Draft};
     qint64 priceWithTaxCents{};
     int revision{1};
@@ -110,6 +133,8 @@ struct QuoteDocument final {
     QDateTime issuedAt;
     QDateTime voidedAt;
     std::vector<QuoteItemSnapshot> items;
+    // 已冻结的工序步骤明细（供报价单展示）。
+    std::vector<QuoteProcessSnapshot> processSteps;
 };
 
 struct QuotePage final {

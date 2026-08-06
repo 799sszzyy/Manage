@@ -10,6 +10,8 @@ add_library(manage_data STATIC
     src/mysql_quote_lifecycle.cpp
     src/mysql_statistics_repository.cpp
     src/mysql_user_repository.cpp
+    src/process_step_repository.cpp
+    src/process_step_service.cpp
 )
 
 add_library(Manage::Data ALIAS manage_data)
