@@ -3,7 +3,9 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QElapsedTimer>
+#include <QGroupBox>
 #include <QHostAddress>
 #include <QHttpServer>
 #include <QHttpServerRequest>
@@ -112,6 +114,7 @@ struct CatalogApi final {
     int materialPosts{};
     int materialPuts{};
     int materialPatches{};
+    int bundlePosts{};
     int customerPosts{};
     int customerPuts{};
     bool forbidMaterialList{};
@@ -121,6 +124,7 @@ struct CatalogApi final {
     QJsonObject lastMaterialPost;
     QJsonObject lastMaterialPut;
     QJsonObject lastMaterialPatch;
+    QJsonObject lastBundlePost;
     QJsonObject lastCustomerPost;
     QJsonObject lastCustomerPut;
 
@@ -216,6 +220,18 @@ struct CatalogApi final {
             [this](const QHttpServerRequest& request) {
                 ++materialPosts;
                 lastMaterialPost = requestObject(request);
+                auto response = materialObject();
+                response.insert(QStringLiteral("revision"), 1);
+                return QHttpServerResponse(response, StatusCode::Created);
+            }
+        );
+        // 三级向导整包提交：物料 + 供应商 + 价格。
+        server.route(
+            QStringLiteral("/api/v1/materials/bundle"),
+            QHttpServerRequest::Method::Post,
+            [this](const QHttpServerRequest& request) {
+                ++bundlePosts;
+                lastBundlePost = requestObject(request);
                 auto response = materialObject();
                 response.insert(QStringLiteral("revision"), 1);
                 return QHttpServerResponse(response, StatusCode::Created);
@@ -373,19 +389,77 @@ void adminCanSearchPageAndMutate(CatalogApi& api) {
     );
 
     materialAdd->click();
+    // 三级向导第 1 步：物料信息（暂存，不落库）。
     child<QLineEdit>(widget, "materialCodeEdit")->setText(QStringLiteral("MAT-NEW"));
     child<QLineEdit>(widget, "materialNameEdit")->setText(QStringLiteral("新物料"));
     child<QLineEdit>(widget, "materialUnitEdit")->setText(QStringLiteral("件"));
     child<QLineEdit>(widget, "materialPriceEdit")->setText(QStringLiteral("12.34"));
+    // 电线类物料：第三级允许同一供应商按铜价区分多条价格。
+    child<QCheckBox>(widget, "materialCopperCheck")->setChecked(true);
     child<QPushButton>(widget, "materialSaveButton")->click();
-    require(waitUntil([&]() { return api.materialPosts == 1; }), "material POST missing");
+    require(api.materialPosts == 0, "wizard step 1 must not post a material");
     require(
-        api.lastMaterialPost.value(QStringLiteral("currentUnitPriceCents")).toInteger() == 1'234,
-        "friendly yuan input must be sent as integer cents"
+        child<QGroupBox>(widget, "materialBaseGroup")->isEnabled() == false &&
+            child<QGroupBox>(widget, "supplierGroupBox")->isEnabled(),
+        "wizard must lock material info and enable suppliers"
+    );
+
+    // 三级向导第 2 步：供应商（暂存）。
+    child<QPushButton>(widget, "supplierAddButton")->click();
+    child<QLineEdit>(widget, "supplierNameEdit")->setText(QStringLiteral("供应商甲"));
+    child<QLineEdit>(widget, "supplierLeadDaysEdit")->setText(QStringLiteral("7"));
+    child<QPushButton>(widget, "supplierSaveButton")->click();
+    child<QPushButton>(widget, "supplierAddButton")->click();
+    child<QLineEdit>(widget, "supplierNameEdit")->setText(QStringLiteral("供应商乙"));
+    child<QLineEdit>(widget, "supplierLeadDaysEdit")->setText(QStringLiteral("10"));
+    child<QPushButton>(widget, "supplierSaveButton")->click();
+    child<QPushButton>(widget, "supplierConfirmButton")->click();
+
+    // 三级向导第 3 步：价格（按供应商 + 铜价）。
+    require(waitUntil([&]() {
+        return child<QComboBox>(widget, "priceSupplierCombo")->count() == 2;
+    }), "wizard price combo must list both suppliers");
+    child<QTableWidget>(widget, "suppliersTable")->selectRow(0);
+    child<QPushButton>(widget, "priceAddButton")->click();
+    child<QLineEdit>(widget, "priceCopperEdit")->setText(QStringLiteral("7.00"));
+    child<QLineEdit>(widget, "priceUnitEdit")->setText(QStringLiteral("11.00"));
+    child<QPushButton>(widget, "priceSaveButton")->click();
+    child<QPushButton>(widget, "priceAddButton")->click();
+    child<QLineEdit>(widget, "priceCopperEdit")->setText(QStringLiteral("7.20"));
+    child<QLineEdit>(widget, "priceUnitEdit")->setText(QStringLiteral("12.00"));
+    child<QPushButton>(widget, "priceSaveButton")->click();
+
+    // 整包提交：一次写入物料 + 供应商 + 价格。
+    child<QPushButton>(widget, "bundleCommitButton")->click();
+    require(waitUntil([&]() { return api.bundlePosts == 1; }), "bundle POST missing");
+    require(
+        api.lastBundlePost.value(QStringLiteral("material"))
+            .toObject()
+            .value(QStringLiteral("currentUnitPriceCents"))
+            .toInteger() == 1'234,
+        "bundle material carries yuan-to-cents conversion"
+    );
+    const auto bundleSuppliers =
+        api.lastBundlePost.value(QStringLiteral("suppliers")).toArray();
+    require(bundleSuppliers.size() == 2, "bundle posts both suppliers");
+    require(
+        bundleSuppliers.at(0).toObject().value(QStringLiteral("supplier"))
+                .toObject().value(QStringLiteral("supplierName")).toString() ==
+            QStringLiteral("供应商甲"),
+        "bundle keeps first supplier"
     );
     require(
-        !api.lastMaterialPost.contains(QStringLiteral("revision")),
-        "new material must not send a revision"
+        bundleSuppliers.at(1).toObject().value(QStringLiteral("supplier"))
+                .toObject().value(QStringLiteral("leadDays")).toInt() == 10,
+        "bundle keeps second supplier lead days"
+    );
+    const auto firstPrices = bundleSuppliers.at(0).toObject()
+                                 .value(QStringLiteral("prices")).toArray();
+    require(firstPrices.size() == 2, "first supplier keeps two prices");
+    require(
+        firstPrices.at(1).toObject().value(QStringLiteral("copperPriceCents"))
+                .toInteger() == 720,
+        "second price of first supplier keeps copper price cents"
     );
 
     require(waitUntil([&]() { return child<QPushButton>(widget, "materialsRefreshButton")->isEnabled(); }),

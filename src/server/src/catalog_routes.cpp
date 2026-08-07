@@ -274,6 +274,25 @@ QJsonObject materialPriceJson(const manage::data::MaterialPrice& price) {
     return object;
 }
 
+// 整包提交响应：物料 + 全部供应商 + 全部价格（按 supplierId 分组到所属供应商下）。
+QJsonObject bundleJson(const manage::data::MaterialBundleResult& result) {
+    QJsonArray suppliers;
+    for (const auto& supplier : result.suppliers) {
+        QJsonArray prices;
+        for (const auto& price : result.prices) {
+            if (price.supplierId == supplier.id) {
+                prices.append(materialPriceJson(price));
+            }
+        }
+        auto supplierObject = materialSupplierJson(supplier);
+        supplierObject.insert(QStringLiteral("prices"), prices);
+        suppliers.append(supplierObject);
+    }
+    QJsonObject object = materialJson(result.material);
+    object.insert(QStringLiteral("suppliers"), suppliers);
+    return object;
+}
+
 template <typename T, typename ToJson>
 QHttpServerResponse pageResponse(
     const manage::data::CatalogResult<manage::data::Page<T>>& result,
@@ -425,6 +444,85 @@ std::optional<std::uint32_t> revision(
     return static_cast<std::uint32_t>(value);
 }
 
+// 物料库三级向导整包解析：{ material, suppliers: [{ supplier, prices: [...] }] }
+std::optional<manage::data::MaterialBundleDraft> materialBundleDraft(
+    const QJsonObject& object,
+    QHttpServerResponse* failure
+) {
+    manage::data::MaterialBundleDraft bundle;
+    const auto materialValue = object.value(QStringLiteral("material"));
+    const auto suppliersValue = object.value(QStringLiteral("suppliers"));
+    if (!materialValue.isObject() || !suppliersValue.isArray()) {
+        *failure = invalidJsonResponse(
+            QStringLiteral("bundle requires material object and suppliers array")
+        );
+        return std::nullopt;
+    }
+
+    const auto parsedMaterial = materialDraft(materialValue.toObject(), failure);
+    if (!parsedMaterial.has_value()) {
+        return std::nullopt;
+    }
+    bundle.material = *parsedMaterial;
+
+    const auto suppliers = suppliersValue.toArray();
+    if (suppliers.size() > 500) {
+        *failure = invalidJsonResponse(
+            QStringLiteral("suppliers array exceeds the 500 item limit")
+        );
+        return std::nullopt;
+    }
+    bundle.suppliers.reserve(static_cast<std::size_t>(suppliers.size()));
+    for (const auto& value : suppliers) {
+        if (!value.isObject()) {
+            *failure = invalidJsonResponse(
+                QStringLiteral("each supplier must be an object")
+            );
+            return std::nullopt;
+        }
+        const auto supplierObject = value.toObject();
+        manage::data::MaterialBundleSupplierDraft entry;
+        const auto parsedSupplier =
+            materialSupplierDraft(supplierObject, failure);
+        if (!parsedSupplier.has_value()) {
+            return std::nullopt;
+        }
+        entry.supplier = *parsedSupplier;
+
+        const auto pricesValue = supplierObject.value(QStringLiteral("prices"));
+        if (!pricesValue.isArray()) {
+            *failure = invalidJsonResponse(
+                QStringLiteral("each supplier requires a prices array")
+            );
+            return std::nullopt;
+        }
+        const auto prices = pricesValue.toArray();
+        if (prices.size() > 100) {
+            *failure = invalidJsonResponse(
+                QStringLiteral("prices array exceeds the 100 item limit")
+            );
+            return std::nullopt;
+        }
+        entry.prices.reserve(static_cast<std::size_t>(prices.size()));
+        for (const auto& priceValue : prices) {
+            if (!priceValue.isObject()) {
+                *failure = invalidJsonResponse(
+                    QStringLiteral("each price must be an object")
+                );
+                return std::nullopt;
+            }
+            const auto parsedPrice =
+                materialPriceDraft(priceValue.toObject(), failure);
+            if (!parsedPrice.has_value()) {
+                return std::nullopt;
+            }
+            entry.prices.push_back(*parsedPrice);
+        }
+        bundle.suppliers.push_back(std::move(entry));
+    }
+    return bundle;
+}
+
 } // namespace
 
 void registerCatalogRoutes(
@@ -501,6 +599,38 @@ void registerCatalogRoutes(
             const auto result = service->createMaterial(*draft);
             return result.ok()
                        ? QHttpServerResponse(materialJson(*result.value), StatusCode::Created)
+                       : errorResponse(*result.error);
+        }
+    );
+    // 物料库三级向导整包提交：物料 + 供应商 + 价格，事务原子写入。
+    server.route(
+        QStringLiteral("/api/v1/materials/bundle"),
+        QHttpServerRequest::Method::Post,
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            if (service == nullptr) {
+                return invalidJsonResponse(
+                    QStringLiteral("catalog service is unavailable")
+                );
+            }
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            const auto bundle = materialBundleDraft(*object, &failure);
+            if (!bundle.has_value()) {
+                return failure;
+            }
+            const auto result = service->createMaterialBundle(*bundle);
+            return result.ok()
+                       ? QHttpServerResponse(bundleJson(*result.value), StatusCode::Created)
                        : errorResponse(*result.error);
         }
     );

@@ -271,6 +271,36 @@ CatalogResult<Material> CatalogService::createMaterial(MaterialDraft draft) cons
     return succeeded(std::move(material));
 }
 
+CatalogResult<MaterialBundleResult> CatalogService::createMaterialBundle(
+    MaterialBundleDraft bundle
+) const {
+    // 物料、每个供应商、每个价格逐项校验；任何一项不合法则整包拒绝，
+    // 与"全部确认后才落库"的向导语义一致。
+    if (const auto error = validateMaterial(&bundle.material); error.has_value()) {
+        return failed<MaterialBundleResult>(*error);
+    }
+    for (auto& entry : bundle.suppliers) {
+        // 校验可能规范化草稿数据，故对每个条目做可变副本。
+        if (const auto error = validateMaterialSupplier(&entry.supplier);
+            error.has_value()) {
+            return failed<MaterialBundleResult>(*error);
+        }
+        for (auto& price : entry.prices) {
+            if (const auto error = validateMaterialPrice(&price);
+                error.has_value()) {
+                return failed<MaterialBundleResult>(*error);
+            }
+        }
+    }
+
+    MaterialBundleResult result;
+    RepositoryError repositoryError;
+    if (!repository_->createMaterialBundle(bundle, &result, &repositoryError)) {
+        return failed<MaterialBundleResult>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(result));
+}
+
 CatalogResult<Material> CatalogService::updateMaterial(
     std::int64_t id,
     std::uint32_t expectedRevision,
