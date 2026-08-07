@@ -143,7 +143,11 @@ std::optional<std::pair<QDate, QDate>> engineerPeriodRange(
         const auto quarter = match.captured(2).toInt();
         const auto startMonth = quarter * 3 - 2;
         const auto start = QDate(year, startMonth, 1);
-        return std::pair{start, QDate(year, startMonth + 2, start.daysInMonth())};
+        // 结束月为 startMonth+2；用结束月自己的天数计算末日（如 9 月=30 天）。
+        return std::pair{
+            start,
+            QDate(year, startMonth + 2, QDate(year, startMonth + 2, 1).daysInMonth()),
+        };
     }
     if (periodType == QStringLiteral("year")) {
         static const QRegularExpression pattern(QStringLiteral(R"(^(\d{4})$)"));

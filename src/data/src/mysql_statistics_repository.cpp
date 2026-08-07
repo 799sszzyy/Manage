@@ -105,7 +105,7 @@ QuoteResult<StatisticsReport> MySqlStatisticsRepository::query(StatisticsFilter 
     if (!filter.startDate.isValid() || !filter.endDate.isValid()) {
         return failure<StatisticsReport>(QuoteErrorCode::Validation, QStringLiteral("startDate and endDate must be valid dates"));
     }
-    if (filter.startDate > filter.endDate || !filter.endDate.addDays(1).isValid()) {
+    if (filter.startDate > filter.endDate || filter.endDate == QDate::maximum()) {
         return failure<StatisticsReport>(QuoteErrorCode::Validation, QStringLiteral("startDate must not be after endDate"));
     }
     if (filter.customerId.has_value() && *filter.customerId <= 0) {
@@ -261,7 +261,7 @@ MySqlStatisticsRepository::queryEngineerResponsibility(
     }
     if (!filter.periodStart.isValid() || !filter.periodEnd.isValid() ||
         filter.periodStart > filter.periodEnd ||
-        !filter.periodEnd.addDays(1).isValid()) {
+        filter.periodEnd == QDate::maximum()) {
         return failure<EngineerResponsibilityReport>(
             QuoteErrorCode::Validation,
             QStringLiteral("engineer responsibility period is invalid")
