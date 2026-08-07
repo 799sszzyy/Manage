@@ -556,6 +556,15 @@ void CatalogWidget::connectActions() {
     connect(suppliersTable_, &QTableWidget::itemSelectionChanged, this, [this]() {
         if (selectedSupplierRow() >= 0) {
             if (wizardStep_ == 3) {
+                // 第三步：让供应商下拉跟随表格选中行，价格列表由下拉统一驱动，
+                // 避免"表格选中行"与"下拉索引"双源不一致造成的价格串位/重影。
+                const auto row = selectedSupplierRow();
+                if (row >= 0 && row < priceSupplierCombo_->count() &&
+                    priceSupplierCombo_->currentIndex() != row) {
+                    priceSupplierCombo_->blockSignals(true);
+                    priceSupplierCombo_->setCurrentIndex(row);
+                    priceSupplierCombo_->blockSignals(false);
+                }
                 renderWizardPrices();
             } else {
                 loadPrices();
@@ -1168,7 +1177,8 @@ void CatalogWidget::confirmSupplierStep() {
     }
     wizardStep_ = 3;
     materialBaseGroup_->setEnabled(false);
-    supplierGroupBox_->setEnabled(false);
+    // 第三步保留第二步可编辑：供应商可继续调整，改动实时同步。
+    supplierGroupBox_->setEnabled(true);
     priceGroupBox_->setEnabled(true);
     // 价格级：供应商下拉列出第 2 步确定的全部供应商。
     priceSupplierCombo_->clear();
@@ -1211,7 +1221,8 @@ void CatalogWidget::updateWizardAccess() {
         bundleCommitButton_->setEnabled(false);
     } else if (wizardStep_ == 3) {
         materialBaseGroup_->setEnabled(false);
-        supplierGroupBox_->setEnabled(false);
+        // 第三步允许回到第二步调整供应商：供应商改动会实时同步到第三步。
+        supplierGroupBox_->setEnabled(writable);
         priceGroupBox_->setEnabled(writable);
         bundleCommitButton_->setEnabled(
             writable && priceSupplierCombo_->count() > 0
@@ -1587,7 +1598,42 @@ void CatalogWidget::renderWizardSuppliers() {
     suppliersStatusLabel_->setText(
         QStringLiteral("已暂存 %1 个供应商（尚未写入数据库）。").arg(suppliers_.size())
     );
+    syncWizardSupplierCombo();
     updateBranchAccess();
+}
+
+// 第二步供应商增/删/改后，重建第三步的供应商下拉并尽量保持原选中项。
+void CatalogWidget::syncWizardSupplierCombo() {
+    if (wizardStep_ != 3 || priceSupplierCombo_ == nullptr) {
+        return;
+    }
+    const auto previousName =
+        priceSupplierCombo_->currentIndex() >= 0
+            ? priceSupplierCombo_->currentText()
+            : QString();
+    priceSupplierCombo_->blockSignals(true);
+    priceSupplierCombo_->clear();
+    const auto suppliers =
+        bundleDraft_.value(QStringLiteral("suppliers")).toArray();
+    int targetIndex = -1;
+    for (int index = 0; index < suppliers.size(); ++index) {
+        const auto supplier = suppliers.at(index).toObject()
+                                  .value(QStringLiteral("supplier")).toObject();
+        priceSupplierCombo_->addItem(
+            supplier.value(QStringLiteral("supplierName")).toString()
+        );
+        if (!previousName.isEmpty() &&
+            supplier.value(QStringLiteral("supplierName")).toString() == previousName) {
+            targetIndex = index;
+        }
+    }
+    if (targetIndex >= 0) {
+        priceSupplierCombo_->setCurrentIndex(targetIndex);
+    } else if (priceSupplierCombo_->count() > 0) {
+        priceSupplierCombo_->setCurrentIndex(0);
+    }
+    priceSupplierCombo_->blockSignals(false);
+    renderWizardPrices();
 }
 
 void CatalogWidget::toggleSelectedSupplier() {

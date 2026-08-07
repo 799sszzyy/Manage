@@ -67,6 +67,8 @@ private:
     // 向导暂存渲染：供应商/价格在确认前仅显示在内存表格。
     void renderWizardSuppliers();
     void renderWizardPrices();
+    // 第二步供应商变动后同步第三步供应商下拉，保持索引与 suppliers 数组一致。
+    void syncWizardSupplierCombo();
 
     // 价格分支（电线类按铜价区分）
     void loadPrices();
