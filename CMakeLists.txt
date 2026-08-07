@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(
     Manage
-    VERSION 0.8.3
+    VERSION 0.9.0
     DESCRIPTION "Windows quotation management system for local or LAN deployment"
     LANGUAGES CXX
 )
