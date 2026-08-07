@@ -127,9 +127,23 @@ QWidget* CatalogWidget::createMaterialsPage() {
     materialsRefreshButton_ = button(
         QStringLiteral("刷新"), QStringLiteral("materialsRefreshButton"), page
     );
+    // 常用操作按钮放在页面顶部，与搜索栏同一行，便于快速访问。
+    materialAddButton_ = button(
+        QStringLiteral("新增物料"), QStringLiteral("materialAddButton"), page
+    );
+    materialEditButton_ = button(
+        QStringLiteral("编辑物料"), QStringLiteral("materialEditButton"), page
+    );
+    materialToggleButton_ = button(
+        QStringLiteral("停用物料"), QStringLiteral("materialToggleButton"), page
+    );
     searchLayout->addWidget(materialsSearchEdit_, 1);
     searchLayout->addWidget(materialsSearchButton_);
     searchLayout->addWidget(materialsRefreshButton_);
+    searchLayout->addStretch();
+    searchLayout->addWidget(materialAddButton_);
+    searchLayout->addWidget(materialEditButton_);
+    searchLayout->addWidget(materialToggleButton_);
     pageLayout->addLayout(searchLayout);
 
     auto* splitter = new QSplitter(Qt::Horizontal, page);
@@ -160,15 +174,6 @@ QWidget* CatalogWidget::createMaterialsPage() {
     pageLayout->addWidget(splitter, 1);
 
     auto* actions = new QHBoxLayout;
-    materialAddButton_ = button(
-        QStringLiteral("新增物料"), QStringLiteral("materialAddButton"), page
-    );
-    materialEditButton_ = button(
-        QStringLiteral("编辑选中项"), QStringLiteral("materialEditButton"), page
-    );
-    materialToggleButton_ = button(
-        QStringLiteral("停用选中项"), QStringLiteral("materialToggleButton"), page
-    );
     materialsPreviousButton_ = button(
         QStringLiteral("上一页"), QStringLiteral("materialsPreviousButton"), page
     );
@@ -177,9 +182,6 @@ QWidget* CatalogWidget::createMaterialsPage() {
     );
     materialsPageLabel_ = new QLabel(page);
     materialsPageLabel_->setObjectName(QStringLiteral("materialsPageLabel"));
-    actions->addWidget(materialAddButton_);
-    actions->addWidget(materialEditButton_);
-    actions->addWidget(materialToggleButton_);
     actions->addStretch();
     actions->addWidget(materialsPreviousButton_);
     actions->addWidget(materialsPageLabel_);
@@ -404,9 +406,19 @@ QWidget* CatalogWidget::createCustomersPage() {
     customersRefreshButton_ = button(
         QStringLiteral("刷新"), QStringLiteral("customersRefreshButton"), page
     );
+    // 常用操作按钮放在页面顶部，与搜索栏同一行，便于快速访问。
+    customerAddButton_ = button(
+        QStringLiteral("新增客户"), QStringLiteral("customerAddButton"), page
+    );
+    customerEditButton_ = button(
+        QStringLiteral("编辑客户"), QStringLiteral("customerEditButton"), page
+    );
     searchLayout->addWidget(customersSearchEdit_, 1);
     searchLayout->addWidget(customersSearchButton_);
     searchLayout->addWidget(customersRefreshButton_);
+    searchLayout->addStretch();
+    searchLayout->addWidget(customerAddButton_);
+    searchLayout->addWidget(customerEditButton_);
     pageLayout->addLayout(searchLayout);
 
     auto* splitter = new QSplitter(Qt::Horizontal, page);
@@ -434,12 +446,6 @@ QWidget* CatalogWidget::createCustomersPage() {
     pageLayout->addWidget(splitter, 1);
 
     auto* actions = new QHBoxLayout;
-    customerAddButton_ = button(
-        QStringLiteral("新增客户"), QStringLiteral("customerAddButton"), page
-    );
-    customerEditButton_ = button(
-        QStringLiteral("编辑选中项"), QStringLiteral("customerEditButton"), page
-    );
     customersPreviousButton_ = button(
         QStringLiteral("上一页"), QStringLiteral("customersPreviousButton"), page
     );
@@ -448,8 +454,6 @@ QWidget* CatalogWidget::createCustomersPage() {
     );
     customersPageLabel_ = new QLabel(page);
     customersPageLabel_->setObjectName(QStringLiteral("customersPageLabel"));
-    actions->addWidget(customerAddButton_);
-    actions->addWidget(customerEditButton_);
     actions->addStretch();
     actions->addWidget(customersPreviousButton_);
     actions->addWidget(customersPageLabel_);
@@ -511,6 +515,9 @@ void CatalogWidget::connectActions() {
         }
     });
     connect(materialsTable_, &QTableWidget::itemSelectionChanged, this, &CatalogWidget::updateWriteAccess);
+    // 双击表格行直接进入编辑，免去先选中再点"编辑物料"。
+    connect(materialsTable_, &QTableWidget::cellDoubleClicked, this,
+            [this](int, int) { beginEditMaterial(); });
     connect(materialAddButton_, &QPushButton::clicked, this, &CatalogWidget::beginNewMaterial);
     connect(materialEditButton_, &QPushButton::clicked, this, &CatalogWidget::beginEditMaterial);
     connect(materialToggleButton_, &QPushButton::clicked, this, &CatalogWidget::toggleSelectedMaterial);
@@ -556,6 +563,9 @@ void CatalogWidget::connectActions() {
         }
     });
     connect(customersTable_, &QTableWidget::itemSelectionChanged, this, &CatalogWidget::updateWriteAccess);
+    // 双击表格行直接进入编辑，免去先选中再点"编辑客户"。
+    connect(customersTable_, &QTableWidget::cellDoubleClicked, this,
+            [this](int, int) { beginEditCustomer(); });
     connect(customerAddButton_, &QPushButton::clicked, this, &CatalogWidget::beginNewCustomer);
     connect(customerEditButton_, &QPushButton::clicked, this, &CatalogWidget::beginEditCustomer);
     connect(customerSaveButton_, &QPushButton::clicked, this, &CatalogWidget::saveCustomer);
