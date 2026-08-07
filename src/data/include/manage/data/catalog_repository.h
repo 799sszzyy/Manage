@@ -27,6 +27,12 @@ public:
         Material* material,
         RepositoryError* error
     ) = 0;
+    // 整包原子创建：物料 + 供应商 + 价格在单个事务内写入。
+    virtual bool createMaterialBundle(
+        const MaterialBundleDraft& bundle,
+        MaterialBundleResult* result,
+        RepositoryError* error
+    ) = 0;
     virtual bool updateMaterial(
         std::int64_t id,
         std::uint32_t expectedRevision,
@@ -149,6 +155,11 @@ public:
     bool createMaterial(
         const MaterialDraft& draft,
         Material* material,
+        RepositoryError* error
+    ) override;
+    bool createMaterialBundle(
+        const MaterialBundleDraft& bundle,
+        MaterialBundleResult* result,
         RepositoryError* error
     ) override;
     bool updateMaterial(

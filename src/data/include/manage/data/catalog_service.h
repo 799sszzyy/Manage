@@ -15,6 +15,10 @@ public:
     CatalogResult<Page<Material>> listMaterials(PageQuery query) const;
     CatalogResult<Material> getMaterial(std::int64_t id) const;
     CatalogResult<Material> createMaterial(MaterialDraft draft) const;
+    // 物料库三级向导的整包提交：物料 + 供应商 + 价格，服务端事务原子写入。
+    CatalogResult<MaterialBundleResult> createMaterialBundle(
+        MaterialBundleDraft bundle
+    ) const;
     CatalogResult<Material> updateMaterial(
         std::int64_t id,
         std::uint32_t expectedRevision,

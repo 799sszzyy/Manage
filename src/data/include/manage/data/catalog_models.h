@@ -99,6 +99,28 @@ struct MaterialPriceDraft final {
     bool isEnabled{true};
 };
 
+// 物料库三级向导中，一个供应商草稿及其全部价格草稿（同一供应商可按铜价多价）。
+struct MaterialBundleSupplierDraft final {
+    MaterialSupplierDraft supplier;
+    std::vector<MaterialPriceDraft> prices;
+};
+
+// 物料库三级向导的整包草稿：物料 + 供应商列表 + 各供应商价格。
+// 服务端在单个事务内原子写入，保证"全部确认后才落库"。
+struct MaterialBundleDraft final {
+    MaterialDraft material;
+    std::vector<MaterialBundleSupplierDraft> suppliers;
+};
+
+// 整包创建结果：物料 + 全部供应商 + 全部价格。
+// suppliers 与 draft.suppliers 一一对应；prices 展平存放，
+// 通过 supplierId 与 suppliers 中的 id 关联。
+struct MaterialBundleResult final {
+    Material material;
+    std::vector<MaterialSupplier> suppliers;
+    std::vector<MaterialPrice> prices;
+};
+
 struct Customer final {
     std::int64_t id{};
     QString name;

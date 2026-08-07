@@ -234,7 +234,6 @@ void priceBranchSupportsCopperAndPlainPrices() {
     manage::data::CatalogService service(repository);
     const auto material = service.createMaterial(validMaterial());
     require(material.ok(), "material must be created for price branch");
-
     manage::data::MaterialSupplierDraft supplierDraft{
         QStringLiteral("供应商甲"),
         QString(),
@@ -311,6 +310,94 @@ void priceBranchSupportsCopperAndPlainPrices() {
     require(updated.value->revision == 2, "price revision increments");
 }
 
+void bundleCommitsMaterialSuppliersAndPricesAtomically() {
+    auto repository = std::make_shared<InMemoryCatalogRepository>();
+    manage::data::CatalogService service(repository);
+
+    // 三级向导整包：一个物料 + 两个供应商（各自价格，同一供应商两条铜价价格）。
+    manage::data::MaterialBundleDraft bundle;
+    bundle.material = validMaterial();
+
+    manage::data::MaterialBundleSupplierDraft first;
+    first.supplier = {QStringLiteral("供应商甲"), QString(), QString(), false, true, 7};
+    first.prices.push_back({std::nullopt, 10'000, false, true});
+    first.prices.push_back({7'200, 11'000, false, true});
+    first.prices.push_back({7'800, 12'000, false, true});
+
+    manage::data::MaterialBundleSupplierDraft second;
+    second.supplier = {QStringLiteral("供应商乙"), QString(), QString(), false, true, 10};
+    second.prices.push_back({std::nullopt, 9'500, false, true});
+
+    bundle.suppliers.push_back(first);
+    bundle.suppliers.push_back(second);
+
+    const auto result = service.createMaterialBundle(std::move(bundle));
+    require(result.ok(), "bundle commit must succeed");
+    require(result.value->material.id > 0, "bundle material id assigned");
+    require(
+        result.value->material.name == QStringLiteral("Steel plate"),
+        "bundle material fields normalized"
+    );
+    require(result.value->suppliers.size() == 2, "bundle creates both suppliers");
+    require(result.value->prices.size() == 4, "bundle creates all prices");
+
+    // 供应商与价格的归属关系：每个价格挂在正确供应商下。
+    const auto& supplierA = result.value->suppliers.at(0);
+    const auto& supplierB = result.value->suppliers.at(1);
+    require(supplierA.leadDays == 7, "first supplier lead days");
+    require(supplierB.leadDays == 10, "second supplier lead days");
+    std::size_t supplierAPrices = 0;
+    std::size_t supplierBPrices = 0;
+    for (const auto& price : result.value->prices) {
+        if (price.supplierId == supplierA.id) {
+            ++supplierAPrices;
+        } else if (price.supplierId == supplierB.id) {
+            ++supplierBPrices;
+        }
+    }
+    require(supplierAPrices == 3, "supplier A keeps three copper-price rows");
+    require(supplierBPrices == 1, "supplier B keeps one plain price row");
+
+    // 提交后可通过现有接口读到同一物料。
+    const auto listed = service.listMaterials({});
+    require(listed.ok() && listed.value->total == 1, "bundle material listed");
+}
+
+void bundleRejectsInvalidSupplierOrPrice() {
+    auto repository = std::make_shared<InMemoryCatalogRepository>();
+    manage::data::CatalogService service(repository);
+
+    manage::data::MaterialBundleDraft bundle;
+    bundle.material = validMaterial();
+
+    // 供应商名称为空 → 整包拒绝。
+    manage::data::MaterialBundleSupplierDraft badSupplier;
+    badSupplier.supplier = {QStringLiteral("   "), QString(), QString(), false, true, 0};
+    bundle.suppliers.push_back(badSupplier);
+    const auto invalid = service.createMaterialBundle(std::move(bundle));
+    require(!invalid.ok(), "bundle with blank supplier name must fail");
+    require(
+        invalid.error->field == QStringLiteral("supplierName"),
+        "bundle supplier validation field"
+    );
+
+    // 合法的物料 + 供应商，但价格铜价为负 → 整包拒绝。
+    manage::data::MaterialBundleDraft bundle2;
+    bundle2.material = validMaterial();
+    manage::data::MaterialBundleSupplierDraft goodSupplier;
+    goodSupplier.supplier = {QStringLiteral("供应商甲"), QString(), QString(), false, true, 5};
+    manage::data::MaterialPriceDraft badPrice;
+    badPrice.copperPriceCents = -1;
+    goodSupplier.prices.push_back(badPrice);
+    bundle2.suppliers.push_back(goodSupplier);
+    const auto invalid2 = service.createMaterialBundle(std::move(bundle2));
+    require(!invalid2.ok(), "bundle with negative copper price must fail");
+    require(
+        invalid2.error->field == QStringLiteral("copperPriceCents"),
+        "bundle price validation field"
+    );
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -322,6 +409,8 @@ int main(int argc, char* argv[]) {
         {"customer lifecycle", customerLifecycleUsesRevision},
         {"supplier branch multi-supplier", supplierBranchSupportsMultipleSuppliers},
         {"price branch copper and plain", priceBranchSupportsCopperAndPlainPrices},
+        {"bundle atomic commit", bundleCommitsMaterialSuppliersAndPricesAtomically},
+        {"bundle rejects invalid data", bundleRejectsInvalidSupplierOrPrice},
     };
 
     std::size_t passed = 0;

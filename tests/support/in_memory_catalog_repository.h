@@ -527,6 +527,39 @@ public:
     std::vector<manage::data::MaterialSupplier> suppliers;
     std::vector<manage::data::MaterialPrice> prices;
 
+    bool createMaterialBundle(
+        const manage::data::MaterialBundleDraft& bundle,
+        manage::data::MaterialBundleResult* result,
+        manage::data::RepositoryError* error
+    ) override {
+        clear(error);
+        if (result == nullptr) {
+            fail(error, manage::data::RepositoryErrorCode::Database, QStringLiteral("result required"));
+            return false;
+        }
+        // 内存仓储按顺序创建：任一环节失败即整体失败（与 MySQL 事务语义一致）。
+        if (!createMaterial(bundle.material, &result->material, error)) {
+            return false;
+        }
+        result->suppliers.reserve(bundle.suppliers.size());
+        for (const auto& entry : bundle.suppliers) {
+            manage::data::MaterialSupplier supplier;
+            if (!createMaterialSupplier(
+                    result->material.id, entry.supplier, &supplier, error)) {
+                return false;
+            }
+            result->suppliers.push_back(supplier);
+            for (const auto& priceDraft : entry.prices) {
+                manage::data::MaterialPrice price;
+                if (!createMaterialPrice(supplier.id, priceDraft, &price, error)) {
+                    return false;
+                }
+                result->prices.push_back(price);
+            }
+        }
+        return true;
+    }
+
 private:
     static void clear(manage::data::RepositoryError* error) {
         if (error != nullptr) {
@@ -575,6 +608,7 @@ private:
         supplier->phone = draft.phone;
         supplier->isDefault = draft.isDefault;
         supplier->isEnabled = draft.isEnabled;
+        supplier->leadDays = draft.leadDays;
     }
     static void apply(
         const manage::data::MaterialPriceDraft& draft,

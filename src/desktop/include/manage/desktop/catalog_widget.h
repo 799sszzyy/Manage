@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QComboBox;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -48,6 +49,12 @@ private:
     void saveMaterial();
     void cancelMaterialEdit();
     void toggleSelectedMaterial();
+    // 物料库三级向导（新增物料时）：物料信息 → 供应商 → 价格。
+    void confirmMaterialStep();
+    void confirmSupplierStep();
+    void commitBundle();
+    void updateWizardAccess();
+    void beginWizard();
 
     // 供应商分支
     void loadSuppliers();
@@ -57,6 +64,9 @@ private:
     void saveSupplier();
     void cancelSupplierEdit();
     void toggleSelectedSupplier();
+    // 向导暂存渲染：供应商/价格在确认前仅显示在内存表格。
+    void renderWizardSuppliers();
+    void renderWizardPrices();
 
     // 价格分支（电线类按铜价区分）
     void loadPrices();
@@ -113,6 +123,10 @@ private:
     bool supplierEditing_{};
     bool priceEditing_{};
     bool customerEditing_{};
+    // 三级向导状态：1=物料信息，2=供应商，3=价格；0 表示非向导（编辑模式）。
+    int wizardStep_{};
+    // 向导暂存：物料 + 供应商数组（每个供应商含 prices 数组），全部确认后统一提交。
+    QJsonObject bundleDraft_;
 
     QLineEdit* materialsSearchEdit_{};
     QPushButton* materialsSearchButton_{};
@@ -126,6 +140,8 @@ private:
     QPushButton* materialEditButton_{};
     QPushButton* materialToggleButton_{};
     QGroupBox* materialEditor_{};
+    // 第一级"物料基本信息"分组：向导第 1 步保存后锁定该分组。
+    QGroupBox* materialBaseGroup_{};
     QLineEdit* materialCodeEdit_{};
     QLineEdit* materialNameEdit_{};
     QLineEdit* materialSpecificationEdit_{};
@@ -142,6 +158,8 @@ private:
     QPushButton* supplierAddButton_{};
     QPushButton* supplierEditButton_{};
     QPushButton* supplierToggleButton_{};
+    // 向导第 2 步"确定供应商"按钮（编辑模式下隐藏）。
+    QPushButton* supplierConfirmButton_{};
     QGroupBox* supplierEditor_{};
     QLineEdit* supplierNameEdit_{};
     QLineEdit* supplierContactEdit_{};
@@ -158,6 +176,10 @@ private:
     QPushButton* priceAddButton_{};
     QPushButton* priceEditButton_{};
     QPushButton* priceToggleButton_{};
+    // 第三级价格模块：选择第二级确定的供应商（不同供应商不同价）。
+    QComboBox* priceSupplierCombo_{};
+    // 整包提交按钮：第三级确认后统一写入数据库。
+    QPushButton* bundleCommitButton_{};
     QGroupBox* priceEditor_{};
     QLineEdit* priceCopperEdit_{};
     QLineEdit* priceUnitEdit_{};
