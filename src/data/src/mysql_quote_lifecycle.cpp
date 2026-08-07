@@ -112,6 +112,9 @@ struct PreparedLine final {
     QString notes;
     // 铜价档快照（可选）：电线类物料报价时选定的铜价（元/吨）。
     std::optional<qint64> copperPriceCents;
+    // 批次9：供应商引用与名称快照（报价行可追溯用了哪家供应商的价格）。
+    qint64 materialSupplierId{};
+    QString supplierName;
 };
 
 // 报价工序步骤快照：名称 + 单人工时（分钟）。
@@ -386,6 +389,48 @@ QuoteResult<PreparedDraft> prepareDraft(
         line.unitPriceCents = input.unitPriceCents;
         line.notes = nonNull(input.notes);
         line.copperPriceCents = input.copperPriceCents;
+
+        // 批次9：报价行指定供应商时校验归属与启用状态，并快照供应商名称。
+        if (input.materialSupplierId > 0) {
+            QSqlQuery supplier(database);
+            supplier.prepare(QStringLiteral(
+                "SELECT material_id, supplier_name, is_enabled "
+                "FROM material_suppliers WHERE id = :id"
+            ));
+            supplier.bindValue(
+                QStringLiteral(":id"), idValue(input.materialSupplierId)
+            );
+            if (!supplier.exec()) {
+                return queryFailure<PreparedDraft>(
+                    QStringLiteral("unable to read quote supplier"), supplier
+                );
+            }
+            if (!supplier.next()) {
+                return failure<PreparedDraft>(
+                    QuoteErrorCode::Validation,
+                    QStringLiteral("quote supplier %1 does not exist")
+                        .arg(input.materialSupplierId)
+                );
+            }
+            if (supplier.value(0).toLongLong() != input.materialId) {
+                return failure<PreparedDraft>(
+                    QuoteErrorCode::Validation,
+                    QStringLiteral(
+                        "supplier %1 does not belong to quote material %2"
+                    ).arg(input.materialSupplierId).arg(input.materialId)
+                );
+            }
+            if (!supplier.value(2).toBool()) {
+                return failure<PreparedDraft>(
+                    QuoteErrorCode::Validation,
+                    QStringLiteral("quote supplier %1 is disabled")
+                        .arg(supplier.value(1).toString())
+                );
+            }
+            line.materialSupplierId = input.materialSupplierId;
+            line.supplierName = supplier.value(1).toString();
+        }
+
         prepared.items.push_back(std::move(line));
         calculation.lines.push_back({
             prepared.items.back().code.toStdString(),
@@ -473,17 +518,26 @@ QuoteResult<bool> insertPreparedLines(
     QSqlQuery query(database);
     query.prepare(QStringLiteral(
         "INSERT INTO quote_items (quote_id, line_no, material_id, "
+        "material_supplier_id, supplier_name_snapshot, "
         "material_code_snapshot, material_name_snapshot, "
         "specification_snapshot, unit_snapshot, quantity_micros, "
         "unit_price_cents, copper_price_cents, subtotal_cents, notes) VALUES "
-        "(:quoteId, :lineNo, :materialId, :code, :name, :specification, "
-        ":unit, :quantity, :unitPrice, :copperPrice, :subtotal, :notes)"
+        "(:quoteId, :lineNo, :materialId, :supplierId, :supplierName, :code, "
+        ":name, :specification, :unit, :quantity, :unitPrice, :copperPrice, "
+        ":subtotal, :notes)"
     ));
     for (std::size_t index = 0; index < lines.size(); ++index) {
         const auto& line = lines[index];
         query.bindValue(QStringLiteral(":quoteId"), idValue(quoteId));
         query.bindValue(QStringLiteral(":lineNo"), static_cast<int>(index + 1));
         query.bindValue(QStringLiteral(":materialId"), idValue(line.materialId));
+        query.bindValue(
+            QStringLiteral(":supplierId"),
+            line.materialSupplierId > 0
+                ? QVariant::fromValue<qlonglong>(line.materialSupplierId)
+                : QVariant(QVariant::LongLong)
+        );
+        query.bindValue(QStringLiteral(":supplierName"), line.supplierName);
         query.bindValue(QStringLiteral(":code"), line.code);
         query.bindValue(QStringLiteral(":name"), line.name);
         query.bindValue(QStringLiteral(":specification"), line.specification);
@@ -628,7 +682,8 @@ QuoteResult<QuoteDocument> loadDocument(QSqlDatabase database, qint64 id) {
 
     QSqlQuery items(database);
     items.prepare(QStringLiteral(
-        "SELECT id, line_no, material_id, material_code_snapshot, "
+        "SELECT id, line_no, material_id, material_supplier_id, "
+        "supplier_name_snapshot, material_code_snapshot, "
         "material_name_snapshot, specification_snapshot, unit_snapshot, "
         "quantity_micros, unit_price_cents, copper_price_cents, "
         "subtotal_cents, notes "
@@ -645,19 +700,23 @@ QuoteResult<QuoteDocument> loadDocument(QSqlDatabase database, qint64 id) {
         item.id = items.value(0).toLongLong();
         item.lineNo = items.value(1).toInt();
         item.materialId = items.value(2).toLongLong();
-        item.materialCode = items.value(3).toString();
-        item.materialName = items.value(4).toString();
-        item.specification = items.value(5).toString();
-        item.unit = items.value(6).toString();
-        item.quantityMicros = items.value(7).toLongLong();
-        item.unitPriceCents = items.value(8).toLongLong();
-        if (items.value(9).isNull()) {
+        if (!items.value(3).isNull()) {
+            item.materialSupplierId = items.value(3).toLongLong();
+        }
+        item.supplierName = items.value(4).toString();
+        item.materialCode = items.value(5).toString();
+        item.materialName = items.value(6).toString();
+        item.specification = items.value(7).toString();
+        item.unit = items.value(8).toString();
+        item.quantityMicros = items.value(9).toLongLong();
+        item.unitPriceCents = items.value(10).toLongLong();
+        if (items.value(11).isNull()) {
             item.copperPriceCents.reset();
         } else {
-            item.copperPriceCents = items.value(9).toLongLong();
+            item.copperPriceCents = items.value(11).toLongLong();
         }
-        item.subtotalCents = items.value(10).toLongLong();
-        item.notes = items.value(11).toString();
+        item.subtotalCents = items.value(12).toLongLong();
+        item.notes = items.value(13).toString();
         document.items.push_back(std::move(item));
     }
 
@@ -1270,6 +1329,8 @@ QuoteResult<QuoteDocument> MySqlQuoteLifecycle::clone(CloneQuoteCommand command)
             item.subtotalCents,
             item.notes,
             item.copperPriceCents,
+            item.materialSupplierId,
+            item.supplierName,
         });
     }
     const auto lines = insertPreparedLines(database_, quoteId, copiedLines);
