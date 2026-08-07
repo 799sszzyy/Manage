@@ -355,7 +355,7 @@ int main(int argc, char* argv[]) {
         manage::data::MigrationRunner migrations(connection.database());
         manage::data::MigrationReport report;
         require(migrations.migrate(&report, &error), error);
-        require(report.currentVersion == 2, QStringLiteral("quote schema version must be 2"));
+        require(report.currentVersion == 10, QStringLiteral("quote schema version must be 10"));
         runLifecycle(connection.database());
         std::cout << "[PASS] real MySQL quote lifecycle, snapshots and transactions\n";
         return EXIT_SUCCESS;

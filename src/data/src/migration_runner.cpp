@@ -397,6 +397,7 @@ QList<Migration> MigrationRunner::builtInMigrations(QString* errorMessage) {
         {7, "007_task_dispatch"},
         {8, "008_delivery_date"},
         {9, "009_quote_copper_tier"},
+        {10, "010_bom_supplier_pricing"},
     };
 
     QList<Migration> migrations;
