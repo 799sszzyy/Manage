@@ -53,7 +53,24 @@ private:
     void removeProcessStep();
     void loadSelectedBom(bool forceReload = false);
     void loadNextBomMaterial();
-    void addMaterialRow(const QJsonObject& material, qint64 quantityMicros, const QString& notes);
+    // 批次9：报价行按（供应商, 铜价档）解析真实单价。
+    // materialId 对应的供应商下拉加载与单价回填。
+    void loadRowSuppliers(
+        int row,
+        qint64 materialId,
+        std::optional<qint64> selectedSupplierId
+    );
+    void resolveRowPrice(int row);
+    void onRowSupplierChanged(int row);
+    void onItemsChanged(QTableWidgetItem* item);
+    void addMaterialRow(
+        const QJsonObject& material,
+        qint64 quantityMicros,
+        const QString& notes,
+        std::optional<qint64> supplierId = std::nullopt,
+        std::optional<qint64> copperPriceCents = std::nullopt,
+        qint64 unitPriceCents = 0
+    );
 
     void startNewQuote();
     void beginEditQuote();
@@ -88,6 +105,8 @@ private:
     int pendingBomIndex_{};
     int bomLoadGeneration_{};
     bool loadingBom_{};
+    // 供应商下拉异步加载的代数保护：明细表格重置时递增，丢弃过期响应。
+    quint64 supplierLoadGeneration_{};
 
     QLineEdit* searchEdit_{};
     QComboBox* statusFilter_{};
