@@ -105,7 +105,9 @@ QuoteResult<StatisticsReport> MySqlStatisticsRepository::query(StatisticsFilter 
     if (!filter.startDate.isValid() || !filter.endDate.isValid()) {
         return failure<StatisticsReport>(QuoteErrorCode::Validation, QStringLiteral("startDate and endDate must be valid dates"));
     }
-    if (filter.startDate > filter.endDate || filter.endDate == QDate::maximum()) {
+    // QDate 无 maximum() 成员；显式判断日历最大日(9999-12-31)，
+    // 该日之后没有"排他下一天"，做区间查询会溢出，必须拒绝。
+    if (filter.startDate > filter.endDate || filter.endDate >= QDate(9999, 12, 31)) {
         return failure<StatisticsReport>(QuoteErrorCode::Validation, QStringLiteral("startDate must not be after endDate"));
     }
     if (filter.customerId.has_value() && *filter.customerId <= 0) {
@@ -261,7 +263,7 @@ MySqlStatisticsRepository::queryEngineerResponsibility(
     }
     if (!filter.periodStart.isValid() || !filter.periodEnd.isValid() ||
         filter.periodStart > filter.periodEnd ||
-        filter.periodEnd == QDate::maximum()) {
+        filter.periodEnd >= QDate(9999, 12, 31)) {
         return failure<EngineerResponsibilityReport>(
             QuoteErrorCode::Validation,
             QStringLiteral("engineer responsibility period is invalid")
