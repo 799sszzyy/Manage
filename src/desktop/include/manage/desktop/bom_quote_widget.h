@@ -49,6 +49,13 @@ private:
     [[nodiscard]] QJsonArray bomItemsPayload(bool* ok, QString* error) const;
     [[nodiscard]] QJsonObject bomMetadataPayload() const;
 
+    // 批次9：按（供应商, 当前铜价）解析真实单价。
+    // 加载某行的供应商下拉（selectedSupplierId > 0 时回显已保存供应商）。
+    void loadSuppliersForRow(int row, std::optional<qint64> selectedSupplierId);
+    void resolveRowPrice(int row);
+    void onRowSupplierChanged(int row);
+    void onBomItemsChanged(QTableWidgetItem* item);
+
     void addQuoteLine();
     void removeQuoteLine();
     void calculateQuote();
@@ -64,6 +71,8 @@ private:
     QString role_;
     bool mustChangePassword_{};
     int pendingRequests_{};
+    // 供应商下拉异步加载的代数保护：BOM 表格重置时递增，丢弃过期响应。
+    quint64 supplierLoadGeneration_{};
     qint64 currentBomId_{};
     int currentBomRevision_{};
     bool currentBomEnabled_{true};
