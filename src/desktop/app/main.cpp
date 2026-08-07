@@ -19,6 +19,16 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationName(QStringLiteral("manage-desktop"));
     QApplication::setApplicationVersion(QStringLiteral(MANAGE_VERSION));
 
+    // 全局调大列表项/按钮/标签页的点击区域，避免小窗口下难以点选。
+    application.setStyleSheet(QStringLiteral(
+        "QTableView::item, QTableWidget::item,"
+        "QListView::item, QListWidget::item {"
+        "    min-height: 28px; padding: 4px;"
+        "}"
+        "QPushButton { min-height: 28px; padding: 4px 12px; }"
+        "QTabBar::tab { min-height: 32px; padding: 6px 14px; }"
+    ));
+
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QStringLiteral("Desktop client for the quotation management system")

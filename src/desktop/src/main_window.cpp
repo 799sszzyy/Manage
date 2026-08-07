@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -131,7 +132,14 @@ int MainWindow::addModuleTab(const QString& title, QWidget* widget) {
     if (!moduleTabs_ || !widget || title.trimmed().isEmpty()) {
         return -1;
     }
-    return moduleTabs_->addTab(widget, title.trimmed());
+    // 统一给模块页加纵向滚动容器：窗口过小时内容滚动而不被压缩重叠，
+    // 窗口过大时内容占满视口而不溢出屏幕。
+    auto* scroll = new QScrollArea(moduleTabs_);
+    scroll->setObjectName(QStringLiteral("moduleScroll_") + title.trimmed());
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(widget);
+    return moduleTabs_->addTab(scroll, title.trimmed());
 }
 
 QWidget* MainWindow::createAuthenticationPage() {
