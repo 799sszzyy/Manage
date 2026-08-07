@@ -154,6 +154,8 @@ enum class RepositoryErrorCode {
 struct RepositoryError final {
     RepositoryErrorCode code{RepositoryErrorCode::None};
     QString message;
+    // 校验失败时携带出错的字段名（如 "copperPriceCents"），便于用户定位。
+    QString field;
 };
 
 enum class CatalogErrorCode {
