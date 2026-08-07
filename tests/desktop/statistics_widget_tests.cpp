@@ -17,6 +17,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTcpServer>
 #include <QThread>
 #include <QUrlQuery>
@@ -189,6 +190,11 @@ int main(int argc, char* argv[]) {
         require(child<QLabel>(widget, "statisticsMessageLabel")->text().contains(QStringLiteral("不能晚于")), "friendly validation");
 
         // ---- 工程师责任制页签 ----
+        // 先切换到工程师页签：isVisible() 依赖父链可见，停留在"按月份"页会导致
+        // 工程师页内控件 isVisible() 恒为 false，掩盖真实显示状态。
+        auto* statisticsTabs = child<QTabWidget>(widget, "statisticsDimensionTabs");
+        auto* engineerTab = child<QWidget>(widget, "statisticsEngineerTab");
+        statisticsTabs->setCurrentWidget(engineerTab);
         require(waitUntil([&] { return child<QComboBox>(widget, "statisticsEngineerCombo")->count() >= 3; }),
                 "engineer candidates loaded");
         auto* engineerCombo = child<QComboBox>(widget, "statisticsEngineerCombo");
