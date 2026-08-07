@@ -36,7 +36,7 @@ foreach ($path in @($desktop, $server, $windeployqt, $mysqlLibrary, $qmysql) + $
 }
 
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$packageDirectory = Join-Path $OutputRoot "Manage-v0.8.0-$timestamp"
+$packageDirectory = Join-Path $OutputRoot "Manage-v0.8.2-$timestamp"
 $binDirectory = Join-Path $packageDirectory 'bin'
 New-Item -ItemType Directory -Path $binDirectory -Force | Out-Null
 Copy-Item -LiteralPath $desktop, $server -Destination $binDirectory
