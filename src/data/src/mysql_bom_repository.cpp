@@ -1,5 +1,7 @@
 #include "manage/data/mysql_bom_repository.h"
 
+#include "manage/data/price_resolution.h"
+
 #include <QHash>
 #include <QSet>
 #include <QSqlError>
@@ -186,6 +188,15 @@ BomRepositoryStatus MySqlBomRepository::create(
         return materialStatus;
     }
 
+    std::vector<BomItemPricing> pricing;
+    const auto pricingStatus = resolveItemsPricing(
+        command.items, pricing, errorMessage
+    );
+    if (pricingStatus != BomRepositoryStatus::Success) {
+        database_.rollback();
+        return pricingStatus;
+    }
+
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "INSERT INTO bom_templates (code, name, description, is_enabled) "
@@ -206,7 +217,7 @@ BomRepositoryStatus MySqlBomRepository::create(
     }
 
     const auto id = query.lastInsertId().toLongLong();
-    if (!insertItems(id, command.items, errorMessage)) {
+    if (!insertItems(id, command.items, pricing, errorMessage)) {
         database_.rollback();
         return BomRepositoryStatus::DatabaseError;
     }
@@ -336,6 +347,15 @@ BomRepositoryStatus MySqlBomRepository::replaceItems(
         return materialStatus;
     }
 
+    std::vector<BomItemPricing> pricing;
+    const auto pricingStatus = resolveItemsPricing(
+        command.items, pricing, errorMessage
+    );
+    if (pricingStatus != BomRepositoryStatus::Success) {
+        database_.rollback();
+        return pricingStatus;
+    }
+
     QSqlQuery versionQuery(database_);
     versionQuery.prepare(QStringLiteral(
         "UPDATE bom_templates SET revision = revision + 1 "
@@ -364,7 +384,7 @@ BomRepositoryStatus MySqlBomRepository::replaceItems(
         database_.rollback();
         return BomRepositoryStatus::DatabaseError;
     }
-    if (!insertItems(command.id, command.items, errorMessage)) {
+    if (!insertItems(command.id, command.items, pricing, errorMessage)) {
         database_.rollback();
         return BomRepositoryStatus::DatabaseError;
     }
@@ -407,7 +427,9 @@ BomRepositoryStatus MySqlBomRepository::load(
     QSqlQuery itemQuery(database_);
     itemQuery.prepare(QStringLiteral(
         "SELECT bi.id, bi.line_no, bi.material_id, m.code, m.name, "
-        "m.specification, m.unit, bi.quantity_micros, bi.notes "
+        "m.specification, m.unit, bi.quantity_micros, bi.notes, "
+        "bi.material_supplier_id, bi.supplier_name_snapshot, "
+        "bi.copper_price_cents, bi.unit_price_cents "
         "FROM bom_items bi JOIN materials m ON m.id = bi.material_id "
         "WHERE bi.bom_template_id = :id ORDER BY bi.line_no"
     ));
@@ -417,17 +439,25 @@ BomRepositoryStatus MySqlBomRepository::load(
         return BomRepositoryStatus::DatabaseError;
     }
     while (itemQuery.next()) {
-        result.items.push_back({
-            itemQuery.value(0).toLongLong(),
-            itemQuery.value(1).toInt(),
-            itemQuery.value(2).toLongLong(),
-            itemQuery.value(3).toString(),
-            itemQuery.value(4).toString(),
-            itemQuery.value(5).toString(),
-            itemQuery.value(6).toString(),
-            itemQuery.value(7).toLongLong(),
-            itemQuery.value(8).toString(),
-        });
+        BomItem item;
+        item.id = itemQuery.value(0).toLongLong();
+        item.lineNo = itemQuery.value(1).toInt();
+        item.materialId = itemQuery.value(2).toLongLong();
+        item.materialCode = itemQuery.value(3).toString();
+        item.materialName = itemQuery.value(4).toString();
+        item.materialSpecification = itemQuery.value(5).toString();
+        item.materialUnit = itemQuery.value(6).toString();
+        item.quantityMicros = itemQuery.value(7).toLongLong();
+        item.notes = itemQuery.value(8).toString();
+        if (!itemQuery.value(9).isNull()) {
+            item.materialSupplierId = itemQuery.value(9).toLongLong();
+        }
+        item.supplierName = itemQuery.value(10).toString();
+        if (!itemQuery.value(11).isNull()) {
+            item.copperPriceCents = itemQuery.value(11).toLongLong();
+        }
+        item.unitPriceCents = itemQuery.value(12).toLongLong();
+        result.items.push_back(std::move(item));
     }
     return BomRepositoryStatus::Success;
 }
@@ -518,9 +548,57 @@ BomRepositoryStatus MySqlBomRepository::lockAndValidateMaterials(
     return BomRepositoryStatus::Success;
 }
 
+BomRepositoryStatus MySqlBomRepository::resolveItemsPricing(
+    const std::vector<BomItemInput>& items,
+    std::vector<BomItemPricing>& pricing,
+    QString& errorMessage
+) {
+    pricing.clear();
+    pricing.reserve(items.size());
+    for (std::size_t index = 0; index < items.size(); ++index) {
+        const auto& item = items.at(index);
+        ResolvedMaterialPrice resolved;
+        if (!resolveMaterialPrice(
+                database_,
+                item.materialId,
+                item.materialSupplierId,
+                item.copperPriceCents,
+                resolved,
+                errorMessage
+            )) {
+            errorMessage = QStringLiteral("items[%1] %2")
+                               .arg(index)
+                               .arg(errorMessage);
+            return BomRepositoryStatus::InvalidMaterial;
+        }
+        // 业务约束：物料已有启用供应商时必须选择供应商，才能得到真实价格。
+        if (resolved.hasSuppliers && resolved.materialSupplierId <= 0) {
+            errorMessage = QStringLiteral(
+                "items[%1] 物料 %2 已有供应商价格，构建 BOM 时必须选择供应商"
+            ).arg(index).arg(item.materialId);
+            return BomRepositoryStatus::InvalidMaterial;
+        }
+        // 业务约束：普通物料不得填写铜价档。
+        if (!resolved.isCopperBased && item.copperPriceCents.has_value()) {
+            errorMessage = QStringLiteral(
+                "items[%1] 物料 %2 是普通物料，不需要填写铜价档"
+            ).arg(index).arg(item.materialId);
+            return BomRepositoryStatus::InvalidMaterial;
+        }
+        pricing.push_back({
+            resolved.materialSupplierId,
+            resolved.supplierName,
+            resolved.copperPriceCents,
+            resolved.unitPriceCents,
+        });
+    }
+    return BomRepositoryStatus::Success;
+}
+
 bool MySqlBomRepository::insertItems(
     qint64 bomId,
     const std::vector<BomItemInput>& items,
+    const std::vector<BomItemPricing>& pricing,
     QString& errorMessage
 ) {
     if (items.empty()) {
@@ -530,13 +608,40 @@ bool MySqlBomRepository::insertItems(
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "INSERT INTO bom_items "
-        "(bom_template_id, line_no, material_id, quantity_micros, notes) "
-        "VALUES (:bomId, :lineNo, :materialId, :quantityMicros, :notes)"
+        "(bom_template_id, line_no, material_id, material_supplier_id, "
+        "supplier_name_snapshot, copper_price_cents, unit_price_cents, "
+        "quantity_micros, notes) "
+        "VALUES (:bomId, :lineNo, :materialId, :supplierId, :supplierName, "
+        ":copperPrice, :unitPrice, :quantityMicros, :notes)"
     ));
-    for (const auto& item : items) {
+    for (std::size_t index = 0; index < items.size(); ++index) {
+        const auto& item = items[index];
+        const auto& price = pricing.at(index);
         query.bindValue(QStringLiteral(":bomId"), bomId);
         query.bindValue(QStringLiteral(":lineNo"), item.lineNo);
         query.bindValue(QStringLiteral(":materialId"), item.materialId);
+        if (price.materialSupplierId > 0) {
+            query.bindValue(
+                QStringLiteral(":supplierId"), price.materialSupplierId
+            );
+        } else {
+            query.bindValue(
+                QStringLiteral(":supplierId"),
+                QVariant(QMetaType::fromType<qlonglong>())
+            );
+        }
+        query.bindValue(QStringLiteral(":supplierName"), price.supplierName);
+        if (price.copperPriceCents.has_value()) {
+            query.bindValue(
+                QStringLiteral(":copperPrice"), *price.copperPriceCents
+            );
+        } else {
+            query.bindValue(
+                QStringLiteral(":copperPrice"),
+                QVariant(QMetaType::fromType<qlonglong>())
+            );
+        }
+        query.bindValue(QStringLiteral(":unitPrice"), price.unitPriceCents);
         query.bindValue(QStringLiteral(":quantityMicros"), item.quantityMicros);
         query.bindValue(
             QStringLiteral(":notes"),

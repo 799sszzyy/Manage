@@ -12,6 +12,7 @@ add_library(manage_data STATIC
     src/mysql_user_repository.cpp
     src/process_step_repository.cpp
     src/process_step_service.cpp
+    src/price_resolution.cpp
     src/task_repository.cpp
     src/task_service.cpp
 )
