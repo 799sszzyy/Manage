@@ -1,6 +1,7 @@
 #pragma once
 
 #include "manage/data/catalog_models.h"
+#include "manage/data/price_resolution.h"
 
 #include <QSqlDatabase>
 
@@ -119,6 +120,16 @@ public:
         std::uint32_t expectedRevision,
         bool enabled,
         MaterialPrice* price,
+        RepositoryError* error
+    ) = 0;
+
+    // 批次9：按（物料, 供应商, 当前铜价）解析真实单价。
+    // 失败时 error.code 为 NotFound/InvalidInput/Database。
+    virtual bool resolveMaterialPrice(
+        std::int64_t materialId,
+        std::int64_t supplierId,
+        std::optional<std::int64_t> copperPriceCents,
+        ResolvedMaterialPrice* result,
         RepositoryError* error
     ) = 0;
 
@@ -253,6 +264,14 @@ public:
         std::uint32_t expectedRevision,
         bool enabled,
         MaterialPrice* price,
+        RepositoryError* error
+    ) override;
+
+    bool resolveMaterialPrice(
+        std::int64_t materialId,
+        std::int64_t supplierId,
+        std::optional<std::int64_t> copperPriceCents,
+        ResolvedMaterialPrice* result,
         RepositoryError* error
     ) override;
 

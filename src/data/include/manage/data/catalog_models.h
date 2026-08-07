@@ -146,6 +146,8 @@ enum class RepositoryErrorCode {
     NotFound,
     RevisionConflict,
     Duplicate,
+    // 批次9：价格解析等业务校验失败（如供应商不属于物料、铜价缺失）。
+    InvalidInput,
     Database,
 };
 

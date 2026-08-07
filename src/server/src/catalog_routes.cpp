@@ -582,6 +582,87 @@ void registerCatalogRoutes(
                                : errorResponse(*result.error);
         }
     );
+    // 批次9：按（物料, 供应商, 当前铜价）解析真实单价，供 BOM/报价编辑回填。
+    // GET /api/v1/materials/<id>/resolve-price?supplierId=<n>&copperPriceCents=<n>
+    server.route(
+        QStringLiteral("/api/v1/materials/<arg>/resolve-price"),
+        QHttpServerRequest::Method::Get,
+        [service, authService](
+            qint64 id,
+            const QHttpServerRequest& request
+        ) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {
+                        manage::auth::UserRole::Admin,
+                        manage::auth::UserRole::Quoter,
+                        manage::auth::UserRole::Viewer,
+                    }
+                )) {
+                return std::move(*failure);
+            }
+            if (service == nullptr) {
+                return invalidJsonResponse(
+                    QStringLiteral("catalog service is unavailable")
+                );
+            }
+            const QUrlQuery query(request.url());
+            bool supplierOk = true;
+            qint64 supplierId = 0;
+            if (query.hasQueryItem(QStringLiteral("supplierId"))) {
+                supplierId = query.queryItemValue(QStringLiteral("supplierId"))
+                                 .toLongLong(&supplierOk);
+            }
+            std::optional<qint64> copperPriceCents;
+            if (query.hasQueryItem(QStringLiteral("copperPriceCents"))) {
+                bool copperOk = true;
+                const auto copper = query
+                                        .queryItemValue(
+                                            QStringLiteral("copperPriceCents")
+                                        )
+                                        .toLongLong(&copperOk);
+                if (!copperOk || copper < 0) {
+                    return invalidJsonResponse(QStringLiteral(
+                        "copperPriceCents must be a non-negative integer"
+                    ));
+                }
+                copperPriceCents = copper;
+            }
+            if (!supplierOk || supplierId < 0) {
+                return invalidJsonResponse(QStringLiteral(
+                    "supplierId must be a non-negative integer"
+                ));
+            }
+            const auto result = service->resolveMaterialPrice(
+                id, supplierId, copperPriceCents
+            );
+            if (!result.ok()) {
+                return errorResponse(*result.error);
+            }
+            const auto& resolved = *result.value;
+            QJsonObject object{
+                {QStringLiteral("materialId"), resolved.materialId},
+                {QStringLiteral("materialCode"), resolved.materialCode},
+                {QStringLiteral("materialName"), resolved.materialName},
+                {QStringLiteral("isCopperBased"), resolved.isCopperBased},
+                {QStringLiteral("supplierId"), resolved.materialSupplierId},
+                {QStringLiteral("supplierName"), resolved.supplierName},
+                {QStringLiteral("unitPriceCents"), resolved.unitPriceCents},
+            };
+            if (resolved.copperPriceCents.has_value()) {
+                object.insert(
+                    QStringLiteral("copperPriceCents"),
+                    static_cast<qint64>(*resolved.copperPriceCents)
+                );
+            } else {
+                object.insert(
+                    QStringLiteral("copperPriceCents"), QJsonValue::Null
+                );
+            }
+            return QHttpServerResponse(object);
+        }
+    );
     server.route(
         QStringLiteral("/api/v1/materials"),
         QHttpServerRequest::Method::Post,

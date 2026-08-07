@@ -435,6 +435,121 @@ public:
         return true;
     }
 
+    // 批次9：按（物料, 供应商, 当前铜价）解析真实单价（与 MySQL 版同规则）。
+    bool resolveMaterialPrice(
+        std::int64_t materialId,
+        std::int64_t supplierId,
+        std::optional<std::int64_t> copperPriceCents,
+        manage::data::ResolvedMaterialPrice* result,
+        manage::data::RepositoryError* error
+    ) override {
+        clear(error);
+        if (result == nullptr) {
+            fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+                 QStringLiteral("result is null"));
+            return false;
+        }
+        const auto material = std::find_if(
+            materials.begin(), materials.end(),
+            [materialId](const auto& item) { return item.id == materialId; }
+        );
+        if (material == materials.end()) {
+            fail(error, manage::data::RepositoryErrorCode::NotFound,
+                 QStringLiteral("material not found"));
+            return false;
+        }
+        if (!material->isEnabled) {
+            fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+                 QStringLiteral("material is disabled"));
+            return false;
+        }
+        *result = {};
+        result->materialId = materialId;
+        result->materialCode = material->code;
+        result->materialName = material->name;
+        result->isCopperBased = material->isCopperBased;
+        result->hasSuppliers = std::any_of(
+            suppliers.begin(), suppliers.end(),
+            [materialId](const auto& item) {
+                return item.materialId == materialId && item.isEnabled;
+            }
+        );
+        if (supplierId <= 0) {
+            result->materialSupplierId = 0;
+            result->unitPriceCents = material->currentUnitPriceCents;
+            return true;
+        }
+        const auto supplier = std::find_if(
+            suppliers.begin(), suppliers.end(),
+            [supplierId](const auto& item) { return item.id == supplierId; }
+        );
+        if (supplier == suppliers.end()) {
+            fail(error, manage::data::RepositoryErrorCode::NotFound,
+                 QStringLiteral("supplier not found"));
+            return false;
+        }
+        if (supplier->materialId != materialId) {
+            fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+                 QStringLiteral("supplier does not belong to the material"));
+            return false;
+        }
+        if (!supplier->isEnabled) {
+            fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+                 QStringLiteral("supplier is disabled"));
+            return false;
+        }
+        result->materialSupplierId = supplierId;
+        result->supplierName = supplier->supplierName;
+
+        std::vector<manage::data::MaterialPrice> branches;
+        for (const auto& price : prices) {
+            if (price.supplierId == supplierId && price.isEnabled) {
+                branches.push_back(price);
+            }
+        }
+        std::sort(branches.begin(), branches.end(), [](const auto& left, const auto& right) {
+            const auto leftCopper = left.copperPriceCents.value_or(0);
+            const auto rightCopper = right.copperPriceCents.value_or(0);
+            return leftCopper < rightCopper;
+        });
+
+        if (material->isCopperBased) {
+            if (!copperPriceCents.has_value() || *copperPriceCents <= 0) {
+                fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+                     QStringLiteral("copper price is required for copper-based material"));
+                return false;
+            }
+            std::vector<std::int64_t> thresholds;
+            for (const auto& branch : branches) {
+                if (branch.copperPriceCents.has_value()) {
+                    thresholds.push_back(*branch.copperPriceCents);
+                }
+            }
+            const auto matched = manage::data::matchCopperTierIndex(
+                thresholds, *copperPriceCents
+            );
+            if (!matched.has_value()) {
+                fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+                     QStringLiteral("no copper price tier for the supplier"));
+                return false;
+            }
+            const auto& branch = branches.at(static_cast<std::size_t>(*matched));
+            result->copperPriceCents = branch.copperPriceCents;
+            result->unitPriceCents = branch.unitPriceCents;
+            return true;
+        }
+
+        for (const auto& branch : branches) {
+            if (!branch.copperPriceCents.has_value()) {
+                result->unitPriceCents = branch.unitPriceCents;
+                return true;
+            }
+        }
+        fail(error, manage::data::RepositoryErrorCode::InvalidInput,
+             QStringLiteral("no plain price for the supplier"));
+        return false;
+    }
+
     bool listCustomers(
         const manage::data::PageQuery& query,
         manage::data::Page<manage::data::Customer>* page,
