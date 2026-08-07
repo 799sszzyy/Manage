@@ -13,6 +13,7 @@ class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
+class QTableWidgetItem;
 class QTextEdit;
 
 namespace manage::desktop {

@@ -11,6 +11,7 @@ class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QTableWidget;
+class QTableWidgetItem;
 
 namespace manage::desktop {
 
