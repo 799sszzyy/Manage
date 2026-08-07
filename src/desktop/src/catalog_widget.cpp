@@ -730,9 +730,8 @@ void CatalogWidget::applySessionState() {
 
     const auto mustChangePassword =
         apiClient_ && apiClient_->isAuthenticated() &&
-        apiClient_->session()
-            .user
-            .value(QStringLiteral("mustChangePassword"), true).toBool();
+        (!apiClient_->session().user.contains(QStringLiteral("mustChangePassword")) ||
+         apiClient_->session().user.value(QStringLiteral("mustChangePassword")).toBool());
     const auto materialMessage = mustChangePassword
                                      ? QStringLiteral("请先修改临时密码，再查看物料。")
                                      : QStringLiteral("请先登录后查看物料。");
@@ -749,9 +748,8 @@ void CatalogWidget::applySessionState() {
 
 bool CatalogWidget::sessionReady() const {
     return apiClient_ && apiClient_->isAuthenticated() &&
-           !apiClient_->session()
-                .user
-                .value(QStringLiteral("mustChangePassword"), true).toBool();
+           !(apiClient_->session().user.contains(QStringLiteral("mustChangePassword")) &&
+             apiClient_->session().user.value(QStringLiteral("mustChangePassword")).toBool());
 }
 
 bool CatalogWidget::canWrite() const {
@@ -866,7 +864,7 @@ void CatalogWidget::showMaterials(const ApiResponse& response) {
         materialsTable_->setItem(row, 7, readOnlyItem(material.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
         materialsTable_->setItem(row, 8, readOnlyItem(QString::number(material.value(QStringLiteral("revision")).toInteger())));
     }
-    materialPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt(1));
+    materialPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt());
     materialTotalPages_ = qMax(0, response.body.value(QStringLiteral("totalPages")).toInt());
     materialTotal_ = qMax<qint64>(0, response.body.value(QStringLiteral("total")).toInteger());
     materialsStatusLabel_->setText(QStringLiteral("已加载 %1 条物料。")
@@ -908,7 +906,7 @@ void CatalogWidget::showCustomers(const ApiResponse& response) {
         customersTable_->setItem(row, 4, readOnlyItem(customer.value(QStringLiteral("notes")).toString()));
         customersTable_->setItem(row, 5, readOnlyItem(QString::number(customer.value(QStringLiteral("revision")).toInteger())));
     }
-    customerPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt(1));
+    customerPage_ = qMax(1, response.body.value(QStringLiteral("page")).toInt());
     customerTotalPages_ = qMax(0, response.body.value(QStringLiteral("totalPages")).toInt());
     customerTotal_ = qMax<qint64>(0, response.body.value(QStringLiteral("total")).toInteger());
     customersStatusLabel_->setText(QStringLiteral("已加载 %1 条客户。")

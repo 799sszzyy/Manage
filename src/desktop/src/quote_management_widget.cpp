@@ -417,7 +417,9 @@ void QuoteManagementWidget::applySessionState() {
     if (apiClient_ && apiClient_->isAuthenticated()) {
         const auto user = apiClient_->session().user;
         role_ = user.value(QStringLiteral("role")).toString();
-        mustChangePassword_ = user.value(QStringLiteral("mustChangePassword"), true).toBool();
+        mustChangePassword_ =
+            !user.contains(QStringLiteral("mustChangePassword")) ||
+            user.value(QStringLiteral("mustChangePassword")).toBool();
     }
     if (!sessionReady()) {
         quotes_ = {};
@@ -1090,7 +1092,7 @@ void QuoteManagementWidget::resolveRowPrice(int row) {
                 return;
             }
             const auto hasSuppliers = response.body
-                                          .value(QStringLiteral("hasSuppliers"), false).toBool();
+                                          .value(QStringLiteral("hasSuppliers")).toBool();
             auto* combo = qobject_cast<QComboBox*>(
                 self->itemsTable_->cellWidget(row, 6)
             );
@@ -1303,7 +1305,7 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
     if (loadedBomQuantityMicros_ <= 0) loadedBomQuantityMicros_ = 1'000'000;
     bomQuantitySpin_->setValue(static_cast<double>(loadedBomQuantityMicros_) / 1'000'000.0);
     bomLeadDaysLabel_->setText(QString::number(quote.value(QStringLiteral("bomLeadDays")).toInt()));
-    laborCountSpin_->setValue(qMax(1, quote.value(QStringLiteral("laborCount")).toInt(1)));
+    laborCountSpin_->setValue(qMax(1, quote.value(QStringLiteral("laborCount")).toInt()));
     processTotalLabel_->setText(QString::number(quote.value(QStringLiteral("processTotalMinutes")).toInteger()));
     estimatedDeliveryLabel_->setText(QString::number(quote.value(QStringLiteral("estimatedDeliveryDays")).toInt()));
     freightSpin_->setValue(quote.value(QStringLiteral("freightCents")).toInteger() / 100.0);

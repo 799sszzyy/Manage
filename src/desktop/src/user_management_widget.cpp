@@ -149,7 +149,7 @@ void UserManagementWidget::showPage(const ApiResponse& response) {
         return;
     }
     users_ = response.body.value(QStringLiteral("items")).toArray();
-    page_ = response.body.value(QStringLiteral("page")).toInt(1);
+    page_ = qMax(1, response.body.value(QStringLiteral("page")).toInt());
     const auto total = response.body.value(QStringLiteral("total")).toInteger();
     totalPages_ = std::max(1, static_cast<int>((total + 19) / 20));
     table_->setRowCount(users_.size());

@@ -174,7 +174,9 @@ void ProcessStepWidget::applySessionState() {
     if (apiClient_ && apiClient_->isAuthenticated()) {
         const auto user = apiClient_->session().user;
         role_ = user.value(QStringLiteral("role")).toString();
-        mustChangePassword_ = user.value(QStringLiteral("mustChangePassword"), true).toBool();
+        mustChangePassword_ =
+            !user.contains(QStringLiteral("mustChangePassword")) ||
+            user.value(QStringLiteral("mustChangePassword")).toBool();
     }
     if (!sessionReady()) {
         steps_ = {};

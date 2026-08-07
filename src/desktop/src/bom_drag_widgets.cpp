@@ -393,7 +393,7 @@ bool BomItemsTable::dropMaterial(const QMimeData* mimeData) {
         material.value(QStringLiteral("code")).toString(),
         material.value(QStringLiteral("name")).toString(),
         1'000'000,
-        material.value(QStringLiteral("isCopperBased"), false).toBool()
+        material.value(QStringLiteral("isCopperBased")).toBool()
     );
 }
 
