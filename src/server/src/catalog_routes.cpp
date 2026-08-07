@@ -649,6 +649,8 @@ void registerCatalogRoutes(
                 {QStringLiteral("supplierId"), resolved.materialSupplierId},
                 {QStringLiteral("supplierName"), resolved.supplierName},
                 {QStringLiteral("unitPriceCents"), resolved.unitPriceCents},
+                // 物料是否有启用供应商：前端据此提示必须先选供应商。
+                {QStringLiteral("hasSuppliers"), resolved.hasSuppliers},
             };
             if (resolved.copperPriceCents.has_value()) {
                 object.insert(

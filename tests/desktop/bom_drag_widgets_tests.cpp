@@ -29,7 +29,7 @@ void require(bool condition, const std::string& message) {
 }
 
 qint64 materialId(const BomItemsTable& table, int row) {
-    const auto* item = table.item(row, 1);
+    const auto* item = table.item(row, BomItemsTable::Code);
     return item ? item->data(Qt::UserRole).toLongLong() : 0;
 }
 
@@ -41,30 +41,30 @@ void addMergeAndReorderKeepWholeRows() {
     require(table.addOrMergeMaterial(22, QStringLiteral("M-22"),
                                      QStringLiteral("螺栓"), 2'500'000),
             "second material must be added");
-    table.item(0, 4)->setText(QStringLiteral("激光切割"));
-    table.item(1, 4)->setText(QStringLiteral("镀锌"));
+    table.item(0, BomItemsTable::Notes)->setText(QStringLiteral("激光切割"));
+    table.item(1, BomItemsTable::Notes)->setText(QStringLiteral("镀锌"));
 
     require(table.addOrMergeMaterial(11, QStringLiteral("M-11"),
                                      QStringLiteral("钢板"), 250'000),
             "duplicate material must merge");
     require(table.rowCount() == 2,
             "duplicate material must not create another row");
-    require(table.item(0, 3)->text() == QStringLiteral("1.250000"),
+    require(table.item(0, BomItemsTable::Quantity)->text() == QStringLiteral("1.250000"),
             "duplicate quantity must be added exactly");
-    require(table.item(0, 4)->text() == QStringLiteral("激光切割"),
+    require(table.item(0, BomItemsTable::Notes)->text() == QStringLiteral("激光切割"),
             "quantity merge must preserve notes");
 
     require(table.moveBomRow(1, 0), "valid row move must succeed");
-    require(table.item(0, 0)->text() == QStringLiteral("10") &&
-                table.item(1, 0)->text() == QStringLiteral("20"),
+    require(table.item(0, BomItemsTable::Line)->text() == QStringLiteral("10") &&
+                table.item(1, BomItemsTable::Line)->text() == QStringLiteral("20"),
             "moved rows must be renumbered as 10, 20");
     require(materialId(table, 0) == 22 &&
-                table.item(0, 3)->text() == QStringLiteral("2.500000") &&
-                table.item(0, 4)->text() == QStringLiteral("镀锌"),
+                table.item(0, BomItemsTable::Quantity)->text() == QStringLiteral("2.500000") &&
+                table.item(0, BomItemsTable::Notes)->text() == QStringLiteral("镀锌"),
             "material id, quantity, and notes must move together");
     require(materialId(table, 1) == 11 &&
-                table.item(1, 3)->text() == QStringLiteral("1.250000") &&
-                table.item(1, 4)->text() == QStringLiteral("激光切割"),
+                table.item(1, BomItemsTable::Quantity)->text() == QStringLiteral("1.250000") &&
+                table.item(1, BomItemsTable::Notes)->text() == QStringLiteral("激光切割"),
             "the other complete row must remain aligned");
 }
 
@@ -111,14 +111,14 @@ void qtDropEventsAddMergeMoveAndRejectInvalidData() {
     );
     QCoreApplication::sendEvent(table.viewport(), &duplicateDrop);
     require(duplicateDrop.isAccepted() && table.rowCount() == 1 &&
-                table.item(0, 3)->text() == QStringLiteral("2.000000"),
+                table.item(0, BomItemsTable::Quantity)->text() == QStringLiteral("2.000000"),
             "repeated Qt material drop must merge quantity");
 
     require(table.addOrMergeMaterial(32, QStringLiteral("M-32"),
                                      QStringLiteral("端盖"), 3'000'000),
             "second row setup must succeed");
-    table.item(0, 4)->setText(QStringLiteral("A note"));
-    table.item(1, 4)->setText(QStringLiteral("B note"));
+    table.item(0, BomItemsTable::Notes)->setText(QStringLiteral("A note"));
+    table.item(1, BomItemsTable::Notes)->setText(QStringLiteral("B note"));
     auto rowMime = BomItemsTable::rowMimeData(1);
     QDragEnterEvent rowEnter(
         QPoint(20, 1), Qt::MoveAction, rowMime.get(),
@@ -136,8 +136,8 @@ void qtDropEventsAddMergeMoveAndRejectInvalidData() {
     );
     QCoreApplication::sendEvent(table.viewport(), &rowDrop);
     require(rowDrop.isAccepted() && materialId(table, 0) == 32 &&
-                table.item(0, 3)->text() == QStringLiteral("3.000000") &&
-                table.item(0, 4)->text() == QStringLiteral("B note"),
+                table.item(0, BomItemsTable::Quantity)->text() == QStringLiteral("3.000000") &&
+                table.item(0, BomItemsTable::Notes)->text() == QStringLiteral("B note"),
             "Qt row drop must move an intact row");
 
     const auto rowCountBeforeInvalid = table.rowCount();

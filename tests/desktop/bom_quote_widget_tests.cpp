@@ -406,7 +406,7 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
     requiredChild<QPushButton>(widget, "bomAddItemButton")->click();
     auto* bomItems = requiredChild<QTableWidget>(widget, "bomItemsTable");
     require(bomItems->rowCount() == 1, "material picker must append one BOM item");
-    bomItems->item(0, 3)->setText(QStringLiteral("1.500001"));
+    bomItems->item(0, 5)->setText(QStringLiteral("1.500001"));
     requiredChild<QPushButton>(widget, "bomSaveButton")->click();
     require(waitUntil([&]() { return api.createCount == 1; }),
             "new BOM must use POST");
@@ -450,7 +450,7 @@ void adminCanManageBomAndCalculateQuote(TestApi& api) {
                    ->text().startsWith(QStringLiteral("2"));
     }), "metadata response must update revision before replacing items");
 
-    bomItems->item(0, 3)->setText(QStringLiteral("2.250000"));
+    bomItems->item(0, 5)->setText(QStringLiteral("2.250000"));
     replaceButton->click();
     require(waitUntil([&]() { return api.replaceCount == 1; }),
             "replace items action must call item endpoint");

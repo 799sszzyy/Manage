@@ -65,7 +65,8 @@ qint64 quoteCountForCustomer(QSqlDatabase database, qint64 customerId) {
 manage::data::QuoteDraft draftFor(
     qint64 customerId,
     qint64 bomId,
-    qint64 materialId
+    qint64 materialId,
+    qint64 supplierId = 0
 ) {
     manage::data::QuoteDraft draft;
     draft.customerId = customerId;
@@ -83,8 +84,102 @@ manage::data::QuoteDraft draftFor(
         QStringLiteral("snapshot line"),
         // 电线类物料铜价档（元/吨，精确到分）。
         std::optional<qint64>(7'000'000),
+        // 批次9：报价行选定的供应商（0 = 未指定）。
+        supplierId,
     }};
     return draft;
+}
+
+// 批次9：报价行指定供应商时校验归属并快照供应商名称。
+void runSupplierSnapshot(QSqlDatabase database) {
+    const auto suffix = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    qint64 customerId = 0;
+    qint64 materialId = 0;
+    qint64 bomId = 0;
+    qint64 supplierId = 0;
+
+    try {
+        QSqlQuery customer(database);
+        customer.prepare(QStringLiteral(
+            "INSERT INTO customers (name) VALUES (:name)"
+        ));
+        customer.bindValue(QStringLiteral(":name"), QStringLiteral("Supplier Quote ") + suffix);
+        requireSql(customer, QStringLiteral("insert supplier quote customer"));
+        customerId = customer.lastInsertId().toLongLong();
+
+        QSqlQuery material(database);
+        material.prepare(QStringLiteral(
+            "INSERT INTO materials (code, name, specification, unit, category, "
+            "current_unit_price_cents, is_copper_based) VALUES (:code, "
+            "'Copper Wire', '2.5mm', 'meter', 'wire', 5000, TRUE)"
+        ));
+        material.bindValue(QStringLiteral(":code"), QStringLiteral("SUP-MAT-") + suffix);
+        requireSql(material, QStringLiteral("insert supplier quote material"));
+        materialId = material.lastInsertId().toLongLong();
+
+        QSqlQuery supplier(database);
+        supplier.prepare(QStringLiteral(
+            "INSERT INTO material_suppliers "
+            "(material_id, supplier_name, contact_name, phone) "
+            "VALUES (:materialId, '铜业一厂', 'Contact', '123456')"
+        ));
+        supplier.bindValue(QStringLiteral(":materialId"), materialId);
+        requireSql(supplier, QStringLiteral("insert quote material supplier"));
+        supplierId = supplier.lastInsertId().toLongLong();
+
+        QSqlQuery bom(database);
+        bom.prepare(QStringLiteral(
+            "INSERT INTO bom_templates (code, name, description) "
+            "VALUES (:code, 'Supplier BOM', '')"
+        ));
+        bom.bindValue(QStringLiteral(":code"), QStringLiteral("SUP-BOM-") + suffix);
+        requireSql(bom, QStringLiteral("insert supplier quote BOM"));
+        bomId = bom.lastInsertId().toLongLong();
+
+        manage::data::MySqlQuoteLifecycle lifecycle(database);
+        const auto created = lifecycle.create({
+            draftFor(customerId, bomId, materialId, supplierId),
+            1,
+        });
+        require(created.ok(), QStringLiteral("create supplier snapshot quote: %1").arg(created.message));
+        require(created.value->items.size() == 1, QStringLiteral("supplier quote item count"));
+        const auto& item = created.value->items.front();
+        require(item.materialSupplierId == supplierId,
+                QStringLiteral("quote item must snapshot materialSupplierId"));
+        require(item.supplierName == QStringLiteral("铜业一厂"),
+                QStringLiteral("quote item must snapshot supplier name"));
+
+        // 克隆保留供应商快照。
+        const auto cloned = lifecycle.clone({
+            created.value->summary.id,
+            1,
+        });
+        require(cloned.ok(), QStringLiteral("clone supplier snapshot quote"));
+        require(cloned.value->items.front().materialSupplierId == supplierId &&
+                    cloned.value->items.front().supplierName == QStringLiteral("铜业一厂"),
+                QStringLiteral("cloned quote keeps supplier snapshot"));
+
+        // 不属于该物料的供应商被拒绝。
+        QSqlQuery otherMaterial(database);
+        otherMaterial.prepare(QStringLiteral(
+            "INSERT INTO materials (code, name, specification, unit, category, "
+            "current_unit_price_cents) VALUES (:code, 'Other', '', 'piece', 'test', 100)"
+        ));
+        otherMaterial.bindValue(QStringLiteral(":code"), QStringLiteral("SUP-OTHER-") + suffix);
+        requireSql(otherMaterial, QStringLiteral("insert other material"));
+        const auto otherMaterialId = otherMaterial.lastInsertId().toLongLong();
+        const auto rejected = lifecycle.create({
+            draftFor(customerId, bomId, otherMaterialId, supplierId),
+            1,
+        });
+        require(!rejected.ok() &&
+                    rejected.error == manage::data::QuoteErrorCode::Validation,
+                QStringLiteral("supplier not belonging to material must be rejected"));
+    } catch (...) {
+        cleanup(database, customerId, bomId, materialId);
+        throw;
+    }
+    cleanup(database, customerId, bomId, materialId);
 }
 
 void runLifecycle(QSqlDatabase database) {
@@ -358,6 +453,8 @@ int main(int argc, char* argv[]) {
         require(report.currentVersion == 10, QStringLiteral("quote schema version must be 10"));
         runLifecycle(connection.database());
         std::cout << "[PASS] real MySQL quote lifecycle, snapshots and transactions\n";
+        runSupplierSnapshot(connection.database());
+        std::cout << "[PASS] real MySQL quote supplier snapshot\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n';

@@ -17,6 +17,7 @@
 #include <QListWidget>
 #include <QPointer>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -706,6 +707,9 @@ void BomQuoteWidget::applyBom(const QJsonObject& object) {
     );
     ++supplierLoadGeneration_;
     bomItemsTable_->setRowCount(0);
+    {
+        // 回显期间屏蔽表格信号，避免铜价列 setItem 触发解析覆盖历史快照。
+        const QSignalBlocker blocker(bomItemsTable_);
     for (const auto& value : object.value(QStringLiteral("items")).toArray()) {
         const auto item = value.toObject();
         const auto row = bomItemsTable_->rowCount();
@@ -751,6 +755,7 @@ void BomQuoteWidget::applyBom(const QJsonObject& object) {
             row,
             item.value(QStringLiteral("materialSupplierId")).toInteger()
         );
+    }
     }
     bomItemsTable_->renumberLines();
     updateControlState();
@@ -1162,7 +1167,13 @@ void BomQuoteWidget::loadSuppliersForRow(
                     [self, row](int) { self->onRowSupplierChanged(row); }
                 );
             }
-            self->resolveRowPrice(row);
+            // 新行单价为空时自动解析回填；已保存的 BOM 行保留历史快照。
+            const auto* priceItem = self->bomItemsTable_->item(
+                row, BomItemsTable::UnitPrice
+            );
+            if (priceItem == nullptr || priceItem->text().trimmed().isEmpty()) {
+                self->resolveRowPrice(row);
+            }
         }
     );
 }
@@ -1208,16 +1219,16 @@ void BomQuoteWidget::resolveRowPrice(int row) {
                 return;
             }
             if (!response.succeeded()) {
-                // 电线类物料已选供应商但尚未填铜价：单价留空待用户补全。
-                priceItem->setText({});
+                // 解析失败（如电线类尚未填铜价）：保留当前显示值，
+                // 保存时由服务端做最终校验并给出明确提示。
                 return;
             }
             const auto hasSuppliers = response.body
                                           .value(QStringLiteral("hasSuppliers"))
                                           .toBool(false);
             if (self->bomItemsTable_->rowSupplierId(row) == 0 && hasSuppliers) {
-                // 有供应商价格的物料必须先选供应商，才能得到真实价格。
-                priceItem->setText({});
+                // 有供应商价格的物料尚未选择供应商：保留当前显示值，
+                // 由用户选择供应商后重新解析。
                 return;
             }
             priceItem->setText(QString::number(

@@ -320,6 +320,8 @@ QJsonObject draftPayload() {
                 {QStringLiteral("unitPriceCents"), 4'936},
                 // 电线类物料：可选铜价档（元/吨，精确到分）。
                 {QStringLiteral("copperPriceCents"), 7'000'000},
+                // 批次9：可选供应商（0 = 未指定）。
+                {QStringLiteral("materialSupplierId"), 8},
                 {QStringLiteral("notes"), QStringLiteral("request line")},
                 {QStringLiteral("materialName"), QStringLiteral("FORGED MATERIAL")},
                 {QStringLiteral("subtotalCents"), 1},
@@ -415,6 +417,8 @@ void verifyDocumentJson(const QJsonObject& object) {
         QStringLiteral("unit"), QStringLiteral("quantityMicros"),
         QStringLiteral("unitPriceCents"), QStringLiteral("copperPriceCents"),
         QStringLiteral("subtotalCents"), QStringLiteral("notes"),
+        // 批次9：供应商引用与名称快照。
+        QStringLiteral("materialSupplierId"), QStringLiteral("supplierName"),
     };
     for (const auto& key : itemKeys) {
         require(
@@ -543,6 +547,9 @@ void checkReadAndWriteRoutes(
             "create actor comes from session");
     require(lifecycle.lastCreate.draft.customerId == 44,
             "create customerId parsed");
+    require(lifecycle.lastCreate.draft.items.size() == 1 &&
+                lifecycle.lastCreate.draft.items.front().materialSupplierId == 8,
+            "create parses item materialSupplierId");
     require(lifecycle.lastCreate.draft.bomTemplateId == 9,
             "create BOM id parsed");
     require(lifecycle.lastCreate.draft.bomQuantityMicros == 3'000'000,

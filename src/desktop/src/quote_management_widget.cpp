@@ -1027,8 +1027,11 @@ void QuoteManagementWidget::loadRowSuppliers(
                 combo, &QComboBox::currentIndexChanged, self,
                 [self, row](int) { self->onRowSupplierChanged(row); }
             );
-            // 回显后按当前选择重新解析单价，确保与所选供应商一致。
-            self->resolveRowPrice(row);
+            // 新行单价为空时自动解析回填；已保存报价行保留历史快照。
+            const auto* priceItem = self->itemsTable_->item(row, 4);
+            if (priceItem == nullptr || priceItem->text().trimmed().isEmpty()) {
+                self->resolveRowPrice(row);
+            }
         }
     );
 }
@@ -1080,7 +1083,8 @@ void QuoteManagementWidget::resolveRowPrice(int row) {
                 return;
             }
             if (!response.succeeded()) {
-                priceItem->setText({});
+                // 解析失败（如电线类尚未填铜价）：保留当前显示值，
+                // 保存时由服务端做最终校验并给出明确提示。
                 return;
             }
             const auto hasSuppliers = response.body
@@ -1091,8 +1095,7 @@ void QuoteManagementWidget::resolveRowPrice(int row) {
             );
             const auto supplierId = combo == nullptr ? 0 : combo->currentData().toLongLong();
             if (supplierId == 0 && hasSuppliers) {
-                // 有供应商价格的物料必须先选供应商，才能得到真实价格。
-                priceItem->setText({});
+                // 有供应商价格的物料尚未选择供应商：保留当前显示值。
                 return;
             }
             priceItem->setText(QString::number(
@@ -1311,7 +1314,10 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
     beforeTaxLabel_->setText(money(quote.value(QStringLiteral("priceBeforeTaxCents")).toInteger()));
     withTaxLabel_->setText(money(quote.value(QStringLiteral("priceWithTaxCents")).toInteger()));
     ++supplierLoadGeneration_;
-    itemsTable_->setRowCount(0);
+    {
+        // 回显期间屏蔽表格信号，避免铜价列 setItem 触发解析覆盖历史快照。
+        const QSignalBlocker blocker(itemsTable_);
+        itemsTable_->setRowCount(0);
     for (const auto& value : quote.value(QStringLiteral("items")).toArray()) {
         const auto item = value.toObject();
         const auto row = itemsTable_->rowCount();
@@ -1352,6 +1358,7 @@ void QuoteManagementWidget::applyDetail(const QJsonObject& quote) {
                 supplierId > 0 ? std::optional<qint64>(supplierId) : std::nullopt
             );
         }
+    }
     }
     processTable_->setRowCount(0);
     for (const auto& value : quote.value(QStringLiteral("processSteps")).toArray()) {

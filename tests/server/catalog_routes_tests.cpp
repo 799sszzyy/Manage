@@ -275,6 +275,110 @@ QString responseError(const NetworkResponse& response) {
         .toString();
 }
 
+// 批次9：价格解析端点按（供应商, 当前铜价）返回真实单价。
+void resolvePriceEndpointResolvesCopperTiers(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& bearerToken
+) {
+    // 电线类物料 + 1 个供应商 + 3 个铜价档。
+    const QJsonObject bundlePayload{
+        {QStringLiteral("material"),
+         QJsonObject{
+             {QStringLiteral("code"), QStringLiteral("MAT-CU-001")},
+             {QStringLiteral("name"), QStringLiteral("铜芯线")},
+             {QStringLiteral("unit"), QStringLiteral("meter")},
+             {QStringLiteral("isCopperBased"), true},
+             {QStringLiteral("currentUnitPriceCents"), 1'000},
+         }},
+        {QStringLiteral("suppliers"),
+         QJsonArray{
+             QJsonObject{
+                 {QStringLiteral("supplier"),
+                  QJsonObject{
+                      {QStringLiteral("supplierName"), QStringLiteral("铜业一厂")},
+                      {QStringLiteral("isDefault"), true},
+                      {QStringLiteral("isEnabled"), true},
+                  }},
+                 {QStringLiteral("prices"),
+                  QJsonArray{
+                      QJsonObject{{QStringLiteral("copperPriceCents"), 6'000'000},
+                                  {QStringLiteral("unitPriceCents"), 8'000}},
+                      QJsonObject{{QStringLiteral("copperPriceCents"), 7'000'000},
+                                  {QStringLiteral("unitPriceCents"), 9'000}},
+                      QJsonObject{{QStringLiteral("copperPriceCents"), 8'000'000},
+                                  {QStringLiteral("unitPriceCents"), 10'000}},
+                  }},
+             },
+         }},
+    };
+    const auto created = sendJson(
+        network, port, QByteArrayLiteral("POST"),
+        QStringLiteral("/api/v1/materials/bundle"), bundlePayload, bearerToken
+    );
+    require(created.status == 201, "copper bundle create must return HTTP 201");
+    const auto bundle = QJsonDocument::fromJson(created.body).object();
+    const auto materialId =
+        bundle.value(QStringLiteral("material")).toObject()
+            .value(QStringLiteral("id")).toInteger();
+    const auto supplierId = bundle.value(QStringLiteral("suppliers"))
+                                .toArray().at(0).toObject()
+                                .value(QStringLiteral("id")).toInteger();
+    require(materialId > 0 && supplierId > 0, "copper bundle ids");
+
+    const auto resolve = [&](qint64 copper) {
+        return waitForReply(network.get(authorizedRequest(
+            port,
+            QStringLiteral("/api/v1/materials/%1/resolve-price?supplierId=%2&copperPriceCents=%3")
+                .arg(materialId).arg(supplierId).arg(copper),
+            bearerToken
+        )));
+    };
+
+    auto exact = QJsonDocument::fromJson(resolve(7'000'000).body).object();
+    require(exact.value(QStringLiteral("unitPriceCents")).toInteger() == 9'000,
+            "exact copper tier match");
+    require(exact.value(QStringLiteral("copperPriceCents")).toInteger() == 7'000'000,
+            "matched tier returned");
+    require(exact.value(QStringLiteral("supplierName")).toString() ==
+                QStringLiteral("铜业一厂"),
+            "supplier name returned");
+    require(exact.value(QStringLiteral("hasSuppliers")).toBool(),
+            "hasSuppliers returned");
+
+    // 向下取档：75000 元/吨落在 70000 档。
+    auto floor = QJsonDocument::fromJson(resolve(7'500'000).body).object();
+    require(floor.value(QStringLiteral("unitPriceCents")).toInteger() == 9'000,
+            "copper tier floors down to nearest tier");
+    // 低于所有档位：取最低档。
+    auto below = QJsonDocument::fromJson(resolve(5'000'000).body).object();
+    require(below.value(QStringLiteral("unitPriceCents")).toInteger() == 8'000,
+            "copper below all tiers uses the lowest tier");
+    // 高于所有档位：取最高档。
+    auto above = QJsonDocument::fromJson(resolve(9'000'000).body).object();
+    require(above.value(QStringLiteral("unitPriceCents")).toInteger() == 10'000,
+            "copper above all tiers uses the highest tier");
+
+    // 电线类物料未提供铜价：拒绝。
+    const auto missingCopper = waitForReply(network.get(authorizedRequest(
+        port,
+        QStringLiteral("/api/v1/materials/%1/resolve-price?supplierId=%2")
+            .arg(materialId).arg(supplierId),
+        bearerToken
+    )));
+    require(missingCopper.status == 400,
+            "missing copper price for copper-based material returns 400");
+
+    // 不存在的物料：404。
+    const auto missingMaterial = waitForReply(network.get(authorizedRequest(
+        port,
+        QStringLiteral("/api/v1/materials/99999/resolve-price?supplierId=1"),
+        bearerToken
+    )));
+    require(missingMaterial.status == 404,
+            "unknown material resolve returns HTTP 404");
+}
+
 void authorizationRulesProtectCatalog(
     QNetworkAccessManager& network,
     quint16 port,
@@ -407,6 +511,19 @@ int main(int argc, char* argv[]) {
         std::cerr << "[FAIL] unable to start catalog route test server\n";
         return EXIT_FAILURE;
     }
+    require(
+        authService->bootstrapAdministrator(
+            QStringLiteral("Correct Horse Battery 2"),
+            QStringLiteral("Main administrator")
+        ).succeeded(),
+        "main administrator bootstrap"
+    );
+    const auto login = authService->login(
+        QStringLiteral("admin"),
+        QStringLiteral("Correct Horse Battery 2")
+    );
+    require(login.succeeded(), "main administrator login");
+    const auto token = login.session.accessToken.toLatin1();
 
     QNetworkAccessManager network;
     try {
@@ -417,6 +534,10 @@ int main(int argc, char* argv[]) {
             userRepository
         );
         std::cout << "[PASS] catalog authorization and REST lifecycle\n";
+        resolvePriceEndpointResolvesCopperTiers(
+            network, port, token
+        );
+        std::cout << "[PASS] resolve-price endpoint copper tiers\n";
         expiredTokenIsRejected(network);
         std::cout << "[PASS] expired catalog session rejection\n";
         return EXIT_SUCCESS;
