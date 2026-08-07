@@ -375,6 +375,34 @@ bool MySqlCatalogRepository::setMaterialEnabled(
     return findMaterial(id, material, error);
 }
 
+bool MySqlCatalogRepository::resolveMaterialPrice(
+    std::int64_t materialId,
+    std::int64_t supplierId,
+    std::optional<std::int64_t> copperPriceCents,
+    ResolvedMaterialPrice* result,
+    RepositoryError* error
+) {
+    clearError(error);
+    if (result == nullptr) {
+        setError(error, RepositoryErrorCode::InvalidInput, QStringLiteral("result is null"));
+        return false;
+    }
+    QString message;
+    if (!manage::data::resolveMaterialPrice(
+            database_,
+            materialId,
+            supplierId,
+            copperPriceCents,
+            *result,
+            message
+        )) {
+        // 数据库层错误与业务校验错误统一作为请求失败返回。
+        setError(error, RepositoryErrorCode::InvalidInput, message);
+        return false;
+    }
+    return true;
+}
+
 bool MySqlCatalogRepository::listCustomers(
     const PageQuery& request,
     Page<Customer>* page,

@@ -85,6 +85,13 @@ public:
         bool enabled
     ) const;
 
+    // 批次9：按（物料, 供应商, 当前铜价）解析真实单价，供 BOM/报价编辑回填。
+    CatalogResult<ResolvedMaterialPrice> resolveMaterialPrice(
+        std::int64_t materialId,
+        std::int64_t supplierId,
+        std::optional<std::int64_t> copperPriceCents
+    ) const;
+
 private:
     static std::optional<CatalogError> validatePage(PageQuery* query);
     static std::optional<CatalogError> validateMaterial(MaterialDraft* draft);

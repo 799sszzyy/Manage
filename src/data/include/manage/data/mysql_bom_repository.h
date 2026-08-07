@@ -55,7 +55,15 @@ private:
         const std::vector<BomItemInput>& items,
         QString& errorMessage
     );
+    // 批次9：按（供应商, 铜价档）解析每条 BOM 条目的真实单价。
+    // 有启用供应商的物料必须指定供应商；电线类物料指定供应商后必须输入铜价。
+    BomRepositoryStatus resolveItemsPricing(
+        const std::vector<BomItemInput>& items,
+        std::vector<BomItemPricing>& pricing,
+        QString& errorMessage
+    );
     bool insertItems(qint64 bomId, const std::vector<BomItemInput>& items,
+                     const std::vector<BomItemPricing>& pricing,
                      QString& errorMessage);
 
     QSqlDatabase database_;

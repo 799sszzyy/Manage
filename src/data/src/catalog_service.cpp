@@ -221,6 +221,14 @@ CatalogError CatalogService::mapRepositoryError(const RepositoryError& error) {
             QStringLiteral("material code already exists"),
             QStringLiteral("code")
         };
+    case RepositoryErrorCode::InvalidInput:
+        return {
+            CatalogErrorCode::InvalidRequest,
+            error.message.isEmpty()
+                ? QStringLiteral("invalid input")
+                : error.message,
+            error.field,
+        };
     case RepositoryErrorCode::Database:
     case RepositoryErrorCode::None:
         return {
@@ -715,6 +723,43 @@ CatalogResult<MaterialPrice> CatalogService::setMaterialPriceEnabled(
         return failed<MaterialPrice>(mapRepositoryError(repositoryError));
     }
     return succeeded(std::move(price));
+}
+
+CatalogResult<ResolvedMaterialPrice> CatalogService::resolveMaterialPrice(
+    std::int64_t materialId,
+    std::int64_t supplierId,
+    std::optional<std::int64_t> copperPriceCents
+) const {
+    if (materialId <= 0) {
+        return failed<ResolvedMaterialPrice>(validationError(
+            QStringLiteral("materialId"),
+            QStringLiteral("materialId must be a positive integer")
+        ));
+    }
+    if (supplierId < 0) {
+        return failed<ResolvedMaterialPrice>(validationError(
+            QStringLiteral("supplierId"),
+            QStringLiteral("supplierId must not be negative")
+        ));
+    }
+    if (copperPriceCents.has_value() && *copperPriceCents <= 0) {
+        return failed<ResolvedMaterialPrice>(validationError(
+            QStringLiteral("copperPriceCents"),
+            QStringLiteral("copperPriceCents must be positive")
+        ));
+    }
+    ResolvedMaterialPrice resolved;
+    RepositoryError repositoryError;
+    if (!repository_->resolveMaterialPrice(
+            materialId,
+            supplierId,
+            copperPriceCents,
+            &resolved,
+            &repositoryError
+        )) {
+        return failed<ResolvedMaterialPrice>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(resolved));
 }
 
 } // namespace manage::data

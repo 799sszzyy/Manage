@@ -233,6 +233,38 @@ void invalidMaterialReferencesAreRejected() {
     require(!quantityResult.ok(), "zero quantity rejected");
 }
 
+// 批次9：条目形状校验——供应商 id 非负、铜价档为正。
+void supplierAndCopperShapeAreValidated() {
+    FakeBomRepository repository;
+    repository.materials.insert(11, true);
+    manage::data::BomService service(repository);
+
+    manage::data::NewBomTemplate negativeSupplier;
+    negativeSupplier.code = QStringLiteral("BOM-NEG");
+    negativeSupplier.name = QStringLiteral("Negative supplier");
+    negativeSupplier.items = {{10, 11, 1'000'000, {}, -1, std::nullopt}};
+    const auto supplierResult = service.create(negativeSupplier);
+    require(!supplierResult.ok(), "negative supplier id rejected");
+    require(supplierResult.error == manage::data::BomErrorCode::Validation,
+            "negative supplier id is a validation error");
+
+    manage::data::NewBomTemplate zeroCopper;
+    zeroCopper.code = QStringLiteral("BOM-COPPER");
+    zeroCopper.name = QStringLiteral("Zero copper");
+    zeroCopper.items = {{10, 11, 1'000'000, {}, 0, 0}};
+    const auto copperResult = service.create(zeroCopper);
+    require(!copperResult.ok(), "non-positive copper tier rejected");
+    require(copperResult.message.contains(QStringLiteral("copperPriceCents")),
+            "copper tier validation message");
+
+    manage::data::NewBomTemplate valid;
+    valid.code = QStringLiteral("BOM-OK");
+    valid.name = QStringLiteral("Valid supplier");
+    valid.items = {{10, 11, 1'000'000, {}, 7, 7'000'000}};
+    const auto validResult = service.create(valid);
+    require(validResult.ok(), "valid supplier and copper shape accepted");
+}
+
 void optimisticConflictIsExposed() {
     FakeBomRepository repository;
     repository.mutationStatus = BomRepositoryStatus::Conflict;
@@ -308,6 +340,7 @@ int main() {
         {"optimistic conflict", optimisticConflictIsExposed},
         {"transaction material validation", transactionMaterialFailureIsExposedAsValidation},
         {"list and replace", listAndReplaceItemsUseValidatedInputs},
+        {"supplier and copper shape", supplierAndCopperShapeAreValidated},
     };
 
     std::size_t passed = 0;

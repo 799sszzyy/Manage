@@ -176,6 +176,8 @@ QJsonObject documentJson(const manage::data::QuoteDocument& document) {
             {QStringLiteral("unitPriceCents"), item.unitPriceCents},
             {QStringLiteral("subtotalCents"), item.subtotalCents},
             {QStringLiteral("notes"), item.notes},
+            {QStringLiteral("materialSupplierId"), item.materialSupplierId},
+            {QStringLiteral("supplierName"), item.supplierName},
         };
         if (item.copperPriceCents.has_value()) {
             row.insert(
@@ -484,6 +486,21 @@ bool readDraft(
         if (!readString(item, QStringLiteral("notes"), input.notes, false)) {
             message = QStringLiteral("items[%1].notes must be a string").arg(index);
             return false;
+        }
+        // 批次9：报价行可选供应商（0 = 未指定；提供时服务端校验并快照名称）。
+        if (item.contains(QStringLiteral("materialSupplierId"))) {
+            if (!readInteger(
+                    item,
+                    QStringLiteral("materialSupplierId"),
+                    input.materialSupplierId,
+                    false,
+                    0
+                ) || input.materialSupplierId < 0) {
+                message = QStringLiteral(
+                    "items[%1].materialSupplierId must be a non-negative safe integer"
+                ).arg(index);
+                return false;
+            }
         }
         // 铜价档（可选）：电线类物料按铜价区分价格分支，
         // 缺省或 null 表示普通物料；提供时须为非负安全整数。

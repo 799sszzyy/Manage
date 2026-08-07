@@ -142,11 +142,16 @@ private:
     ) {
         std::vector<manage::data::BomItem> items;
         for (const auto& input : inputs) {
+            const auto hasSupplier = input.materialSupplierId > 0;
             items.push_back({
                 static_cast<qint64>(items.size() + 1), input.lineNo,
                 input.materialId, QStringLiteral("MAT-42"),
                 QStringLiteral("Test material"), QString(),
                 QStringLiteral("piece"), input.quantityMicros, input.notes,
+                input.materialSupplierId,
+                hasSupplier ? QStringLiteral("测试供应商") : QString{},
+                input.copperPriceCents,
+                hasSupplier ? 1234 : 0,
             });
         }
         return items;
@@ -354,6 +359,75 @@ void malformedAndDuplicateItemsAreRejected(
             "validation error code");
 }
 
+// 批次9：BOM 条目携带供应商与铜价档；负供应商 id / 非正铜价被拒绝。
+void bomItemsCarrySupplierAndCopperTier(
+    QNetworkAccessManager& network,
+    quint16 port,
+    const QByteArray& bearerToken
+) {
+    const QJsonObject body{
+        {QStringLiteral("code"), QStringLiteral("BOM-SUP")},
+        {QStringLiteral("name"), QStringLiteral("Supplier BOM")},
+        {QStringLiteral("items"), QJsonArray{
+            QJsonObject{{QStringLiteral("lineNo"), 10},
+                        {QStringLiteral("materialId"), 42},
+                        {QStringLiteral("quantityMicros"), 1'000'000},
+                        {QStringLiteral("materialSupplierId"), 7},
+                        {QStringLiteral("copperPriceCents"), 7'000'000}},
+        }},
+    };
+    const auto response = waitForReply(network.post(
+        jsonRequest(port, QStringLiteral("/api/v1/boms"), bearerToken),
+        compact(body)
+    ));
+    require(response.status == 201, "BOM with supplier fields must be created");
+    const auto object = QJsonDocument::fromJson(response.body).object();
+    const auto item = object.value(QStringLiteral("items")).toArray().first().toObject();
+    require(item.value(QStringLiteral("materialSupplierId")).toInteger() == 7,
+            "BOM item must echo materialSupplierId");
+    require(item.value(QStringLiteral("supplierName")).toString() ==
+                QStringLiteral("测试供应商"),
+            "BOM item must echo supplier name snapshot");
+    require(item.value(QStringLiteral("copperPriceCents")).toInteger() == 7'000'000,
+            "BOM item must echo copper tier snapshot");
+    require(item.value(QStringLiteral("unitPriceCents")).toInteger() == 1234,
+            "BOM item must echo resolved unit price snapshot");
+
+    const QJsonObject negativeSupplier{
+        {QStringLiteral("code"), QStringLiteral("BOM-NEG")},
+        {QStringLiteral("name"), QStringLiteral("Negative supplier")},
+        {QStringLiteral("items"), QJsonArray{
+            QJsonObject{{QStringLiteral("lineNo"), 10},
+                        {QStringLiteral("materialId"), 42},
+                        {QStringLiteral("quantityMicros"), 1},
+                        {QStringLiteral("materialSupplierId"), -1}},
+        }},
+    };
+    const auto rejected = waitForReply(network.post(
+        jsonRequest(port, QStringLiteral("/api/v1/boms"), bearerToken),
+        compact(negativeSupplier)
+    ));
+    require(rejected.status == 400,
+            "negative materialSupplierId must return HTTP 400");
+
+    const QJsonObject zeroCopper{
+        {QStringLiteral("code"), QStringLiteral("BOM-COPPER")},
+        {QStringLiteral("name"), QStringLiteral("Zero copper")},
+        {QStringLiteral("items"), QJsonArray{
+            QJsonObject{{QStringLiteral("lineNo"), 10},
+                        {QStringLiteral("materialId"), 42},
+                        {QStringLiteral("quantityMicros"), 1},
+                        {QStringLiteral("copperPriceCents"), 0}},
+        }},
+    };
+    const auto copperRejected = waitForReply(network.post(
+        jsonRequest(port, QStringLiteral("/api/v1/boms"), bearerToken),
+        compact(zeroCopper)
+    ));
+    require(copperRejected.status == 400,
+            "non-positive copperPriceCents must return HTTP 400");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -409,6 +483,8 @@ int main(int argc, char* argv[]) {
         std::cout << "[PASS] complete BOM route flow\n";
         malformedAndDuplicateItemsAreRejected(network, port, token);
         std::cout << "[PASS] BOM route validation\n";
+        bomItemsCarrySupplierAndCopperTier(network, port, token);
+        std::cout << "[PASS] BOM supplier and copper tier fields\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n';

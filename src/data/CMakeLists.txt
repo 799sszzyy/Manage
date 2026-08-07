@@ -12,6 +12,7 @@ add_library(manage_data STATIC
     src/mysql_user_repository.cpp
     src/process_step_repository.cpp
     src/process_step_service.cpp
+    src/price_resolution.cpp
     src/task_repository.cpp
     src/task_service.cpp
 )
@@ -45,6 +46,7 @@ qt_add_resources(manage_data "manage_migrations"
         "${PROJECT_SOURCE_DIR}/db-migrations/007_task_dispatch.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/008_delivery_date.sql"
         "${PROJECT_SOURCE_DIR}/db-migrations/009_quote_copper_tier.sql"
+        "${PROJECT_SOURCE_DIR}/db-migrations/010_bom_supplier_pricing.sql"
 )
 
 manage_apply_project_options(manage_data)

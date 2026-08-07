@@ -263,6 +263,12 @@ QString BomService::validateItemShape(
         if (item.notes.size() > 500) {
             return QStringLiteral("items[%1].notes must not exceed 500 characters").arg(index);
         }
+        if (item.materialSupplierId < 0) {
+            return QStringLiteral("items[%1].materialSupplierId must not be negative").arg(index);
+        }
+        if (item.copperPriceCents.has_value() && *item.copperPriceCents <= 0) {
+            return QStringLiteral("items[%1].copperPriceCents must be positive").arg(index);
+        }
         if (lineNumbers.contains(item.lineNo)) {
             return QStringLiteral("duplicate BOM line number: %1").arg(item.lineNo);
         }

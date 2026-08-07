@@ -17,6 +17,7 @@
 #include <QListWidget>
 #include <QPointer>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -26,12 +27,15 @@
 
 #include <limits>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace manage::desktop {
 namespace {
 
 constexpr auto kIdRole = Qt::UserRole;
 constexpr auto kPriceCentsRole = Qt::UserRole + 1;
+constexpr auto kCopperBasedRole = Qt::UserRole + 2;
 
 void nameObject(QObject* object, const char* name) {
     object->setObjectName(QString::fromLatin1(name));
@@ -432,6 +436,11 @@ void BomQuoteWidget::connectUi() {
             });
     connect(bomItemsTable_, &QTableWidget::itemSelectionChanged,
             this, &BomQuoteWidget::updateControlState);
+    // 批次9：新增物料行后异步加载该物料的供应商下拉；铜价档修改后重新解析单价。
+    connect(bomItemsTable_, &BomItemsTable::rowAdded, this,
+            [this](int row) { loadSuppliersForRow(row, std::nullopt); });
+    connect(bomItemsTable_, &QTableWidget::itemChanged, this,
+            &BomQuoteWidget::onBomItemsChanged);
 
     connect(quoteAddLineButton_, &QPushButton::clicked,
             this, &BomQuoteWidget::addQuoteLine);
@@ -619,11 +628,20 @@ void BomQuoteWidget::refreshMaterials() {
                     .arg(material.value(QStringLiteral("code")).toString(),
                          material.value(QStringLiteral("name")).toString());
                 const auto id = material.value(QStringLiteral("id")).toInteger();
+                const auto isCopperBased = material
+                                               .value(QStringLiteral("isCopperBased"))
+                                               .toBool(false);
                 self->bomMaterialCombo_->addItem(label, id);
+                self->bomMaterialCombo_->setItemData(
+                    self->bomMaterialCombo_->count() - 1,
+                    isCopperBased,
+                    kCopperBasedRole
+                );
                 self->bomMaterialList_->addMaterial(
                     id,
                     material.value(QStringLiteral("code")).toString(),
-                    material.value(QStringLiteral("name")).toString()
+                    material.value(QStringLiteral("name")).toString(),
+                    isCopperBased
                 );
                 const auto quoteIndex = self->quoteMaterialCombo_->count();
                 self->quoteMaterialCombo_->addItem(label,
@@ -689,30 +707,57 @@ void BomQuoteWidget::applyBom(const QJsonObject& object) {
     bomRevisionLabel_->setText(
         QStringLiteral("%1（ID %2）").arg(currentBomRevision_).arg(currentBomId_)
     );
+    ++supplierLoadGeneration_;
     bomItemsTable_->setRowCount(0);
+    {
+        // 回显期间屏蔽表格信号，避免铜价列 setItem 触发解析覆盖历史快照。
+        const QSignalBlocker blocker(bomItemsTable_);
     for (const auto& value : object.value(QStringLiteral("items")).toArray()) {
         const auto item = value.toObject();
         const auto row = bomItemsTable_->rowCount();
         bomItemsTable_->insertRow(row);
-        bomItemsTable_->setItem(row, 0, new QTableWidgetItem(QString::number(
-            item.value(QStringLiteral("lineNo")).toInt()
-        )));
+        bomItemsTable_->setItem(row, BomItemsTable::Line,
+            new QTableWidgetItem(QString::number(
+                item.value(QStringLiteral("lineNo")).toInt()
+            )));
         auto* materialCode = readOnlyItem(
             item.value(QStringLiteral("materialCode")).toString()
         );
         materialCode->setData(kIdRole,
                               item.value(QStringLiteral("materialId")).toInteger());
-        bomItemsTable_->setItem(row, 1, materialCode);
-        bomItemsTable_->setItem(row, 2, readOnlyItem(
+        bomItemsTable_->setItem(row, BomItemsTable::Code, materialCode);
+        bomItemsTable_->setItem(row, BomItemsTable::Name, readOnlyItem(
             item.value(QStringLiteral("materialName")).toString()
         ));
+        auto* supplierCombo = new QComboBox(bomItemsTable_);
+        supplierCombo->addItem(QStringLiteral("— 未选择 —"), qint64{0});
+        bomItemsTable_->setCellWidget(
+            row, BomItemsTable::Supplier, supplierCombo
+        );
+        const auto copper = item.value(QStringLiteral("copperPriceCents"));
+        auto* copperItem = new QTableWidgetItem;
+        if (copper.isDouble()) {
+            copperItem->setText(QString::number(copper.toInteger() / 100.0, 'f', 2));
+        }
+        bomItemsTable_->setItem(row, BomItemsTable::Copper, copperItem);
         const auto quantity = item.value(QStringLiteral("quantityMicros")).toInteger();
-        bomItemsTable_->setItem(row, 3, new QTableWidgetItem(
-            QString::number(static_cast<double>(quantity) / 1'000'000.0, 'f', 6)
+        bomItemsTable_->setItem(row, BomItemsTable::Quantity,
+            new QTableWidgetItem(
+                QString::number(static_cast<double>(quantity) / 1'000'000.0, 'f', 6)
+            ));
+        bomItemsTable_->setItem(row, BomItemsTable::UnitPrice, readOnlyItem(
+            QString::number(
+                item.value(QStringLiteral("unitPriceCents")).toInteger() / 100.0, 'f', 2
+            )
         ));
-        bomItemsTable_->setItem(row, 4, new QTableWidgetItem(
-            item.value(QStringLiteral("notes")).toString()
-        ));
+        bomItemsTable_->setItem(row, BomItemsTable::Notes,
+            new QTableWidgetItem(item.value(QStringLiteral("notes")).toString()));
+        // 批次9：异步加载该行供应商下拉并回显已保存的供应商与价格快照。
+        loadSuppliersForRow(
+            row,
+            item.value(QStringLiteral("materialSupplierId")).toInteger()
+        );
+    }
     }
     bomItemsTable_->renumberLines();
     updateControlState();
@@ -726,6 +771,7 @@ void BomQuoteWidget::startNewBom() {
     bomNameEdit_->clear();
     bomDescriptionEdit_->clear();
     bomRevisionLabel_->setText(QStringLiteral("未保存"));
+    ++supplierLoadGeneration_;
     bomItemsTable_->setRowCount(0);
     bomStatusLabel_->setText(
         QStringLiteral("正在新建 BOM；填写基本信息和明细后点击保存。")
@@ -745,10 +791,11 @@ QJsonArray BomQuoteWidget::bomItemsPayload(bool* ok, QString* error) const {
     *ok = false;
     QJsonArray result;
     for (int row = 0; row < bomItemsTable_->rowCount(); ++row) {
-        const auto* lineItem = bomItemsTable_->item(row, 0);
-        const auto* materialItem = bomItemsTable_->item(row, 1);
-        const auto* quantityItem = bomItemsTable_->item(row, 3);
-        const auto* notesItem = bomItemsTable_->item(row, 4);
+        const auto* lineItem = bomItemsTable_->item(row, BomItemsTable::Line);
+        const auto* materialItem = bomItemsTable_->item(row, BomItemsTable::Code);
+        const auto* quantityItem = bomItemsTable_->item(row, BomItemsTable::Quantity);
+        const auto* notesItem = bomItemsTable_->item(row, BomItemsTable::Notes);
+        const auto* copperItem = bomItemsTable_->item(row, BomItemsTable::Copper);
         bool lineOk = false;
         const auto lineNo = lineItem ? lineItem->text().trimmed().toInt(&lineOk) : 0;
         const auto materialId = materialItem
@@ -763,12 +810,31 @@ QJsonArray BomQuoteWidget::bomItemsPayload(bool* ok, QString* error) const {
             ).arg(row + 1);
             return {};
         }
-        result.append(QJsonObject{
+        QJsonObject item{
             {QStringLiteral("lineNo"), lineNo},
             {QStringLiteral("materialId"), materialId},
             {QStringLiteral("quantityMicros"), *quantity},
             {QStringLiteral("notes"), notesItem ? notesItem->text().trimmed() : QString{}},
-        });
+        };
+        // 批次9：携带供应商与当前铜价（铜价档留空传 null，由服务端解析真实单价）。
+        const auto supplierId = bomItemsTable_->rowSupplierId(row);
+        item.insert(QStringLiteral("materialSupplierId"), supplierId);
+        const auto copperText = copperItem ? copperItem->text().trimmed() : QString{};
+        if (copperText.isEmpty()) {
+            item.insert(
+                QStringLiteral("copperPriceCents"), QJsonValue(QJsonValue::Null)
+            );
+        } else {
+            const auto copper = parseScaledDecimal(copperText, 2, false);
+            if (!copper.has_value()) {
+                *error = QStringLiteral(
+                    "第 %1 行铜价档无效：最多两位小数。"
+                ).arg(row + 1);
+                return {};
+            }
+            item.insert(QStringLiteral("copperPriceCents"), *copper);
+        }
+        result.append(std::move(item));
     }
     *ok = true;
     return result;
@@ -911,9 +977,11 @@ void BomQuoteWidget::addBomItem() {
         return;
     }
     const auto materialId = bomMaterialCombo_->currentData().toLongLong();
+    const auto isCopperBased = bomMaterialCombo_->currentData(kCopperBasedRole)
+                                   .toBool(false);
     const auto parts = bomMaterialCombo_->currentText().split(QStringLiteral(" — "));
     if (!bomItemsTable_->addOrMergeMaterial(
-            materialId, parts.value(0), parts.value(1)
+            materialId, parts.value(0), parts.value(1), 1'000'000, isCopperBased
         )) {
         bomStatusLabel_->setText(QStringLiteral("物料无效或现有数量无法合并。"));
         return;
@@ -1045,6 +1113,142 @@ void BomQuoteWidget::calculateQuote() {
             );
         }
     );
+}
+
+void BomQuoteWidget::loadSuppliersForRow(
+    int row,
+    std::optional<qint64> selectedSupplierId
+) {
+    if (!apiClient_ || !sessionReady() || row < 0) {
+        return;
+    }
+    const auto materialId = bomItemsTable_->rowMaterialId(row);
+    if (materialId <= 0) {
+        return;
+    }
+    const auto generation = supplierLoadGeneration_;
+    QPointer<BomQuoteWidget> self(this);
+    apiClient_->get(
+        QStringLiteral("/api/v1/materials/%1/suppliers?page=1&pageSize=100")
+            .arg(materialId),
+        [self, row, materialId, generation, selectedSupplierId](
+            ApiResponse response
+        ) {
+            if (!self) {
+                return;
+            }
+            if (generation != self->supplierLoadGeneration_ ||
+                row >= self->bomItemsTable_->rowCount() ||
+                self->bomItemsTable_->rowMaterialId(row) != materialId) {
+                return;
+            }
+            std::vector<std::pair<qint64, QString>> suppliers;
+            if (response.succeeded()) {
+                const auto items = response.body.value(QStringLiteral("items")).toArray();
+                for (const auto& value : items) {
+                    const auto supplier = value.toObject();
+                    suppliers.emplace_back(
+                        supplier.value(QStringLiteral("id")).toInteger(),
+                        supplier.value(QStringLiteral("supplierName")).toString()
+                    );
+                }
+            }
+            self->bomItemsTable_->setRowSuppliers(
+                row, suppliers, selectedSupplierId.value_or(0)
+            );
+            auto* combo = qobject_cast<QComboBox*>(
+                self->bomItemsTable_->cellWidget(
+                    row, BomItemsTable::Supplier
+                )
+            );
+            if (combo != nullptr) {
+                // 同一行下拉只挂一次监听，供应商变更时重新解析单价。
+                QObject::disconnect(combo, nullptr, self, nullptr);
+                connect(
+                    combo, &QComboBox::currentIndexChanged, self,
+                    [self, row](int) { self->onRowSupplierChanged(row); }
+                );
+            }
+            // 新行单价为空时自动解析回填；已保存的 BOM 行保留历史快照。
+            const auto* priceItem = self->bomItemsTable_->item(
+                row, BomItemsTable::UnitPrice
+            );
+            if (priceItem == nullptr || priceItem->text().trimmed().isEmpty()) {
+                self->resolveRowPrice(row);
+            }
+        }
+    );
+}
+
+void BomQuoteWidget::resolveRowPrice(int row) {
+    if (!apiClient_ || !sessionReady() || row < 0 ||
+        row >= bomItemsTable_->rowCount()) {
+        return;
+    }
+    const auto materialId = bomItemsTable_->rowMaterialId(row);
+    const auto supplierId = bomItemsTable_->rowSupplierId(row);
+    if (materialId <= 0) {
+        return;
+    }
+    const auto generation = supplierLoadGeneration_;
+    auto* copperItem = bomItemsTable_->item(row, BomItemsTable::Copper);
+    const auto copperText = copperItem ? copperItem->text().trimmed() : QString{};
+    auto path = QStringLiteral(
+        "/api/v1/materials/%1/resolve-price?supplierId=%2"
+    ).arg(materialId).arg(supplierId);
+    if (!copperText.isEmpty()) {
+        const auto copper = parseScaledDecimal(copperText, 2, false);
+        if (copper.has_value()) {
+            path += QStringLiteral("&copperPriceCents=%1").arg(*copper);
+        }
+    }
+    QPointer<BomQuoteWidget> self(this);
+    apiClient_->get(
+        path,
+        [self, row, materialId, generation](ApiResponse response) {
+            if (!self) {
+                return;
+            }
+            if (generation != self->supplierLoadGeneration_ ||
+                row >= self->bomItemsTable_->rowCount() ||
+                self->bomItemsTable_->rowMaterialId(row) != materialId) {
+                return;
+            }
+            auto* priceItem = self->bomItemsTable_->item(
+                row, BomItemsTable::UnitPrice
+            );
+            if (priceItem == nullptr) {
+                return;
+            }
+            if (!response.succeeded()) {
+                // 解析失败（如电线类尚未填铜价）：保留当前显示值，
+                // 保存时由服务端做最终校验并给出明确提示。
+                return;
+            }
+            const auto hasSuppliers = response.body
+                                          .value(QStringLiteral("hasSuppliers"))
+                                          .toBool(false);
+            if (self->bomItemsTable_->rowSupplierId(row) == 0 && hasSuppliers) {
+                // 有供应商价格的物料尚未选择供应商：保留当前显示值，
+                // 由用户选择供应商后重新解析。
+                return;
+            }
+            priceItem->setText(QString::number(
+                response.body.value(QStringLiteral("unitPriceCents")).toInteger() / 100.0,
+                'f', 2
+            ));
+        }
+    );
+}
+
+void BomQuoteWidget::onRowSupplierChanged(int row) {
+    resolveRowPrice(row);
+}
+
+void BomQuoteWidget::onBomItemsChanged(QTableWidgetItem* item) {
+    if (item != nullptr && item->column() == BomItemsTable::Copper) {
+        resolveRowPrice(item->row());
+    }
 }
 
 bool BomQuoteWidget::isAdmin() const {

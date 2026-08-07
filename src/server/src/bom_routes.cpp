@@ -92,7 +92,7 @@ QJsonObject templateJson(const manage::data::BomTemplate& bom) {
     auto object = summaryJson(bom.summary);
     QJsonArray items;
     for (const auto& item : bom.items) {
-        items.append(QJsonObject{
+        QJsonObject row{
             {QStringLiteral("id"), item.id},
             {QStringLiteral("lineNo"), item.lineNo},
             {QStringLiteral("materialId"), item.materialId},
@@ -102,7 +102,21 @@ QJsonObject templateJson(const manage::data::BomTemplate& bom) {
             {QStringLiteral("materialUnit"), item.materialUnit},
             {QStringLiteral("quantityMicros"), item.quantityMicros},
             {QStringLiteral("notes"), item.notes},
-        });
+            {QStringLiteral("materialSupplierId"), item.materialSupplierId},
+            {QStringLiteral("supplierName"), item.supplierName},
+            {QStringLiteral("unitPriceCents"), item.unitPriceCents},
+        };
+        if (item.copperPriceCents.has_value()) {
+            row.insert(
+                QStringLiteral("copperPriceCents"),
+                QJsonValue(*item.copperPriceCents)
+            );
+        } else {
+            row.insert(
+                QStringLiteral("copperPriceCents"), QJsonValue::Null
+            );
+        }
+        items.append(std::move(row));
     }
     object.insert(QStringLiteral("items"), items);
     return object;
@@ -187,11 +201,40 @@ bool readItems(
             errorMessage = QStringLiteral("items[%1].notes must be a string").arg(index);
             return false;
         }
+        qint64 supplierId = 0;
+        if (item.contains(QStringLiteral("materialSupplierId")) &&
+            (!readInteger(item, QStringLiteral("materialSupplierId"), supplierId) ||
+             supplierId < 0)) {
+            errorMessage = QStringLiteral(
+                "items[%1].materialSupplierId must be a non-negative safe integer"
+            ).arg(index);
+            return false;
+        }
+        std::optional<qint64> copperPriceCents;
+        if (item.contains(QStringLiteral("copperPriceCents"))) {
+            const auto copperValue = item.value(QStringLiteral("copperPriceCents"));
+            if (copperValue.isNull()) {
+                copperPriceCents.reset();
+            } else {
+                qint64 copper = 0;
+                if (!readInteger(
+                        item, QStringLiteral("copperPriceCents"), copper
+                    ) || copper <= 0) {
+                    errorMessage = QStringLiteral(
+                        "items[%1].copperPriceCents must be null or a positive safe integer"
+                    ).arg(index);
+                    return false;
+                }
+                copperPriceCents = copper;
+            }
+        }
         result.push_back({
             static_cast<int>(lineNo),
             materialId,
             quantityMicros,
             item.value(QStringLiteral("notes")).toString(),
+            supplierId,
+            copperPriceCents,
         });
     }
     return true;
