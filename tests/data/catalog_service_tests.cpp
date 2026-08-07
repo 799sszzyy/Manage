@@ -398,6 +398,82 @@ void bundleRejectsInvalidSupplierOrPrice() {
     );
 }
 
+void replaceBundleUpdatesMaterialSuppliersAndPricesAtomically() {
+    auto repository = std::make_shared<InMemoryCatalogRepository>();
+    manage::data::CatalogService service(repository);
+
+    // 先用 createBundle 创建初始数据。
+    manage::data::MaterialBundleDraft initial;
+    initial.material = validMaterial();
+
+    manage::data::MaterialBundleSupplierDraft first;
+    first.supplier = {QStringLiteral("供应商甲"), QString(), QString(), false, true, 7};
+    first.prices.push_back({std::nullopt, 10'000, false, true});
+    initial.suppliers.push_back(first);
+
+    const auto created = service.createMaterialBundle(std::move(initial));
+    require(created.ok(), "initial bundle must succeed");
+
+    // 替换：保留供应商甲，但追加供应商乙，更换物料名称。
+    manage::data::MaterialBundleDraft replacement;
+    replacement.material = validMaterial();
+    replacement.material.name = QStringLiteral("Steel plate v2");
+
+    manage::data::MaterialBundleSupplierDraft kept;
+    kept.supplier = {QStringLiteral("供应商甲"), QString(), QString(), false, true, 7};
+    kept.prices.push_back({std::nullopt, 11'500, false, true});
+
+    manage::data::MaterialBundleSupplierDraft added;
+    added.supplier = {QStringLiteral("供应商乙"), QString(), QString(), false, true, 5};
+    added.prices.push_back({std::nullopt, 9'000, false, true});
+    added.prices.push_back({7'200, 9'800, false, true});
+
+    replacement.suppliers.push_back(kept);
+    replacement.suppliers.push_back(added);
+
+    const auto result = service.replaceMaterialBundle(
+        created.value->material.id,
+        created.value->material.revision,
+        std::move(replacement)
+    );
+    require(result.ok(), "replace bundle must succeed");
+    require(
+        result.value->material.name == QStringLiteral("Steel plate v2"),
+        "material name updated by replace"
+    );
+    require(result.value->material.revision == 2, "revision increments");
+    require(result.value->suppliers.size() == 2, "kept and added suppliers");
+
+    // 旧供应商甲的价格应被替换（仅保留新价格）。
+    const auto& supplierA = result.value->suppliers.at(0);
+    require(supplierA.leadDays == 7, "kept supplier lead days preserved");
+    std::size_t supplierAPrices = 0;
+    std::size_t supplierBPrices = 0;
+    for (const auto& price : result.value->prices) {
+        if (price.supplierId == supplierA.id) {
+            ++supplierAPrices;
+        } else {
+            ++supplierBPrices;
+        }
+    }
+    require(supplierAPrices == 1, "kept supplier has exactly the new price");
+    require(supplierBPrices == 2, "added supplier carries two new prices");
+
+    // 乐观锁：revision 不匹配则拒绝。
+    manage::data::MaterialBundleDraft stale;
+    stale.material = validMaterial();
+    const auto staleResult = service.replaceMaterialBundle(
+        created.value->material.id,
+        99,
+        std::move(stale)
+    );
+    require(!staleResult.ok(), "stale revision must fail");
+    require(
+        staleResult.error->code == manage::data::CatalogErrorCode::RevisionConflict,
+        "replace must surface revision conflict"
+    );
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -411,6 +487,7 @@ int main(int argc, char* argv[]) {
         {"price branch copper and plain", priceBranchSupportsCopperAndPlainPrices},
         {"bundle atomic commit", bundleCommitsMaterialSuppliersAndPricesAtomically},
         {"bundle rejects invalid data", bundleRejectsInvalidSupplierOrPrice},
+        {"bundle replace update", replaceBundleUpdatesMaterialSuppliersAndPricesAtomically},
     };
 
     std::size_t passed = 0;

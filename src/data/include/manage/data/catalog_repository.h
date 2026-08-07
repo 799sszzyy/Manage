@@ -33,6 +33,14 @@ public:
         MaterialBundleResult* result,
         RepositoryError* error
     ) = 0;
+    // 整包替换（编辑模式）：事务内 UPDATE 物料 + 替换供应商与价格。
+    virtual bool replaceMaterialBundle(
+        std::int64_t materialId,
+        std::uint32_t expectedRevision,
+        const MaterialBundleDraft& bundle,
+        MaterialBundleResult* result,
+        RepositoryError* error
+    ) = 0;
     virtual bool updateMaterial(
         std::int64_t id,
         std::uint32_t expectedRevision,
@@ -158,6 +166,13 @@ public:
         RepositoryError* error
     ) override;
     bool createMaterialBundle(
+        const MaterialBundleDraft& bundle,
+        MaterialBundleResult* result,
+        RepositoryError* error
+    ) override;
+    bool replaceMaterialBundle(
+        std::int64_t materialId,
+        std::uint32_t expectedRevision,
         const MaterialBundleDraft& bundle,
         MaterialBundleResult* result,
         RepositoryError* error

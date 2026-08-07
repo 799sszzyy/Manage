@@ -570,10 +570,10 @@ void CatalogWidget::connectActions() {
     connect(priceSaveButton_, &QPushButton::clicked, this, &CatalogWidget::savePrice);
     connect(priceCancelButton_, &QPushButton::clicked, this, &CatalogWidget::cancelPriceEdit);
     connect(pricesTable_, &QTableWidget::itemSelectionChanged, this, &CatalogWidget::updateBranchAccess);
-    // 向导：切换供应商下拉时刷新该供应商的价格列表。
+    // 向导：切换供应商下拉时刷新该供应商的价格列表（渲染暂存，不发 API）。
     connect(priceSupplierCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
         if (wizardStep_ == 3) {
-            loadPrices();
+            renderWizardPrices();
         }
     });
     connect(bundleCommitButton_, &QPushButton::clicked, this, &CatalogWidget::commitBundle);
@@ -1000,8 +1000,12 @@ void CatalogWidget::beginEditMaterial() {
     editingMaterialId_ = material.value(QStringLiteral("id")).toInteger();
     editingMaterialRevision_ = material.value(QStringLiteral("revision")).toInteger();
     materialEditing_ = true;
-    wizardStep_ = 0;
-    bundleDraft_ = QJsonObject{};
+    // 编辑模式与新增一致：三级向导，全部确认后整包提交。
+    wizardStep_ = 1;
+    bundleDraft_ = QJsonObject{
+        {QStringLiteral("material"), QJsonObject{}},
+        {QStringLiteral("suppliers"), QJsonArray{}},
+    };
     materialCodeEdit_->setText(material.value(QStringLiteral("code")).toString());
     materialNameEdit_->setText(material.value(QStringLiteral("name")).toString());
     materialSpecificationEdit_->setText(material.value(QStringLiteral("specification")).toString());
@@ -1010,12 +1014,13 @@ void CatalogWidget::beginEditMaterial() {
     materialCopperCheck_->setChecked(material.value(QStringLiteral("isCopperBased")).toBool());
     materialPriceEdit_->setText(priceText(material.value(QStringLiteral("currentUnitPriceCents")).toInteger()));
     materialEnabledCheck_->setChecked(material.value(QStringLiteral("isEnabled")).toBool());
-    materialEditor_->setTitle(QStringLiteral("编辑物料"));
+    materialEditor_->setTitle(QStringLiteral("编辑物料（三级向导）"));
     materialBaseGroup_->setEnabled(true);
-    supplierGroupBox_->setEnabled(true);
-    priceGroupBox_->setEnabled(true);
-    bundleCommitButton_->setVisible(false);
-    priceSupplierCombo_->setVisible(false);
+    supplierGroupBox_->setEnabled(false);
+    priceGroupBox_->setEnabled(false);
+    bundleCommitButton_->setVisible(true);
+    supplierConfirmButton_->setVisible(true);
+    priceSupplierCombo_->setVisible(true);
     suppliers_.clear();
     suppliersTable_->setRowCount(0);
     prices_.clear();
@@ -1026,6 +1031,7 @@ void CatalogWidget::beginEditMaterial() {
     priceEditing_ = false;
     updateWriteAccess();
     applyCopperVisibility();
+    // 加载该物料现有供应商与价格作为向导起点。
     loadSuppliers();
 }
 
@@ -1135,9 +1141,17 @@ void CatalogWidget::confirmMaterialStep() {
     editingPriceId_ = 0;
     supplierEditing_ = false;
     priceEditing_ = false;
-    materialsStatusLabel_->setText(
-        QStringLiteral("物料信息已确认（暂存，尚未写入数据库）。请继续添加供应商。")
-    );
+    // 编辑模式：第 1 步确认后展示该物料已加载的供应商草稿。
+    if (editingMaterialId_ > 0) {
+        renderWizardSuppliers();
+        materialsStatusLabel_->setText(
+            QStringLiteral("物料信息已确认。可修改现有供应商或继续添加。")
+        );
+    } else {
+        materialsStatusLabel_->setText(
+            QStringLiteral("物料信息已确认（暂存，尚未写入数据库）。请继续添加供应商。")
+        );
+    }
     updateWizardAccess();
     supplierNameEdit_->setFocus();
 }
@@ -1210,9 +1224,10 @@ void CatalogWidget::commitBundle() {
     if (!canWrite() || wizardStep_ != 3 || materialBusy_) {
         return;
     }
+    const auto updating = editingMaterialId_ > 0;
     setMaterialBusy(true);
     materialsStatusLabel_->setText(QStringLiteral("正在提交整包物料库…"));
-    const auto callback = [self = QPointer<CatalogWidget>(this)](ApiResponse response) {
+    const auto callback = [self = QPointer<CatalogWidget>(this), updating](ApiResponse response) {
         if (!self) {
             return;
         }
@@ -1227,15 +1242,31 @@ void CatalogWidget::commitBundle() {
         self->priceSupplierCombo_->setVisible(false);
         self->cancelMaterialEdit();
         self->materialsStatusLabel_->setText(
-            QStringLiteral("物料库提交成功：物料、供应商与价格已写入数据库。")
+            updating ? QStringLiteral("物料库更新成功：物料、供应商与价格已写入数据库。")
+                     : QStringLiteral("物料库提交成功：物料、供应商与价格已写入数据库。")
         );
         self->refreshMaterials();
     };
-    apiClient_->post(
-        QStringLiteral("/api/v1/materials/bundle"),
-        bundleDraft_,
-        callback
-    );
+    // 编辑模式整包替换（PUT，带乐观锁）；新增模式整包创建（POST）。
+    if (updating) {
+        auto body = bundleDraft_;
+        body.insert(QStringLiteral("materialId"), editingMaterialId_);
+        body.insert(
+            QStringLiteral("materialRevision"),
+            static_cast<qint64>(editingMaterialRevision_)
+        );
+        apiClient_->put(
+            QStringLiteral("/api/v1/materials/bundle"),
+            body,
+            callback
+        );
+    } else {
+        apiClient_->post(
+            QStringLiteral("/api/v1/materials/bundle"),
+            bundleDraft_,
+            callback
+        );
+    }
 }
 
 void CatalogWidget::cancelMaterialEdit() {
@@ -1325,6 +1356,8 @@ void CatalogWidget::showSuppliers(const ApiResponse& response) {
 
     suppliers_.clear();
     suppliersTable_->setRowCount(0);
+    auto draftSuppliers = bundleDraft_.value(QStringLiteral("suppliers")).toArray();
+    draftSuppliers = QJsonArray{};
     for (const auto& value : items.toArray()) {
         if (!value.isObject()) {
             continue;
@@ -1340,6 +1373,17 @@ void CatalogWidget::showSuppliers(const ApiResponse& response) {
         suppliersTable_->setItem(row, 4, readOnlyItem(supplier.value(QStringLiteral("isDefault")).toBool() ? QStringLiteral("是") : QStringLiteral("否")));
         suppliersTable_->setItem(row, 5, readOnlyItem(supplier.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
         suppliersTable_->setItem(row, 6, readOnlyItem(QString::number(supplier.value(QStringLiteral("revision")).toInteger())));
+        // 向导编辑起点：供应商草稿带 id/revision，价格稍后异步填充。
+        // 编辑模式下加载可能晚于用户操作完成，故向导任意步骤都写回草稿。
+        if (wizardStep_ == 1 || (wizardStep_ == 2 && editingMaterialId_ > 0)) {
+            draftSuppliers.append(QJsonObject{
+                {QStringLiteral("supplier"), supplier},
+                {QStringLiteral("prices"), QJsonArray{}},
+            });
+        }
+    }
+    if (wizardStep_ == 1 || (wizardStep_ == 2 && editingMaterialId_ > 0)) {
+        bundleDraft_.insert(QStringLiteral("suppliers"), draftSuppliers);
     }
     suppliersStatusLabel_->setText(QStringLiteral("该物料共 %1 个供应商。")
                                        .arg(suppliers_.size()));
@@ -1424,6 +1468,31 @@ void CatalogWidget::saveSupplier() {
     // 三级向导第 2 步：供应商暂存到内存草稿，不落库。
     if (wizardStep_ == 2) {
         auto suppliers = bundleDraft_.value(QStringLiteral("suppliers")).toArray();
+        // 编辑模式：修改已有供应商时更新原条目（保留其 id/revision）。
+        const auto editingExisting = editingSupplierId_ > 0;
+        if (editingExisting) {
+            for (int index = 0; index < suppliers.size(); ++index) {
+                const auto existing =
+                    suppliers.at(index).toObject()
+                        .value(QStringLiteral("supplier")).toObject();
+                if (existing.value(QStringLiteral("id")).toInteger() == editingSupplierId_) {
+                    auto updated = existing;
+                    for (auto it = body.constBegin(); it != body.constEnd(); ++it) {
+                        updated.insert(it.key(), it.value());
+                    }
+                    auto entry = suppliers.at(index).toObject();
+                    entry.insert(QStringLiteral("supplier"), updated);
+                    suppliers.replace(index, entry);
+                    bundleDraft_.insert(QStringLiteral("suppliers"), suppliers);
+                    cancelSupplierEdit();
+                    renderWizardSuppliers();
+                    suppliersStatusLabel_->setText(
+                        QStringLiteral("供应商已更新（暂存，尚未写入数据库）。")
+                    );
+                    return;
+                }
+            }
+        }
         const auto duplicate = std::any_of(
             suppliers.begin(),
             suppliers.end(),
@@ -1592,6 +1661,7 @@ void CatalogWidget::showPrices(const ApiResponse& response) {
     prices_.clear();
     pricesTable_->setRowCount(0);
     const auto copperBased = materialCopperCheck_->isChecked();
+    QJsonArray draftPrices;
     for (const auto& value : items.toArray()) {
         if (!value.isObject()) {
             continue;
@@ -1611,6 +1681,18 @@ void CatalogWidget::showPrices(const ApiResponse& response) {
         pricesTable_->setItem(row, 3, readOnlyItem(price.value(QStringLiteral("isEnabled")).toBool() ? QStringLiteral("启用") : QStringLiteral("停用")));
         pricesTable_->setItem(row, 4, readOnlyItem(QString::number(price.value(QStringLiteral("revision")).toInteger())));
         pricesTable_->setItem(row, 5, readOnlyItem(copperBased ? QStringLiteral("按铜价") : QStringLiteral("普通")));
+        draftPrices.append(price);
+    }
+    // 向导编辑起点：把已加载价格写回 bundleDraft_ 当前供应商条目。
+    if (wizardStep_ == 1 || (wizardStep_ == 3 && editingMaterialId_ > 0)) {
+        const auto supplierRow = selectedSupplierRow();
+        auto draftSuppliers = bundleDraft_.value(QStringLiteral("suppliers")).toArray();
+        if (supplierRow >= 0 && supplierRow < draftSuppliers.size()) {
+            auto entry = draftSuppliers.at(supplierRow).toObject();
+            entry.insert(QStringLiteral("prices"), draftPrices);
+            draftSuppliers.replace(supplierRow, entry);
+            bundleDraft_.insert(QStringLiteral("suppliers"), draftSuppliers);
+        }
     }
     pricesStatusLabel_->setText(QStringLiteral("该供应商共 %1 条价格。")
                                     .arg(prices_.size()));
@@ -1716,6 +1798,29 @@ void CatalogWidget::savePrice() {
         }
         auto entry = suppliers.at(supplierIndex).toObject();
         auto prices = entry.value(QStringLiteral("prices")).toArray();
+        // 编辑模式：修改已有价格时更新原条目（保留 id/revision）。
+        const auto editingExistingPrice = editingPriceId_ > 0;
+        if (editingExistingPrice) {
+            for (int index = 0; index < prices.size(); ++index) {
+                if (prices.at(index).toObject()
+                        .value(QStringLiteral("id")).toInteger() == editingPriceId_) {
+                    auto updated = prices.at(index).toObject();
+                    for (auto it = body.constBegin(); it != body.constEnd(); ++it) {
+                        updated.insert(it.key(), it.value());
+                    }
+                    prices.replace(index, updated);
+                    entry.insert(QStringLiteral("prices"), prices);
+                    suppliers.replace(supplierIndex, entry);
+                    bundleDraft_.insert(QStringLiteral("suppliers"), suppliers);
+                    cancelPriceEdit();
+                    renderWizardPrices();
+                    pricesStatusLabel_->setText(
+                        QStringLiteral("价格已更新（暂存，尚未写入数据库）。")
+                    );
+                    return;
+                }
+            }
+        }
         prices.append(body);
         entry.insert(QStringLiteral("prices"), prices);
         suppliers.replace(supplierIndex, entry);
@@ -1994,6 +2099,11 @@ QString CatalogWidget::errorText(const ApiResponse& response) const {
     }
     if (response.error.code == QStringLiteral("invalid_request") ||
         response.error.code == QStringLiteral("invalid_json")) {
+        // 透传服务端的字段级 message，便于精确定位失败原因。
+        if (!response.error.message.isEmpty()) {
+            return QStringLiteral("提交内容不符合要求：%1")
+                .arg(response.error.message);
+        }
         return QStringLiteral("提交内容不符合要求，请检查后重试。");
     }
     return QStringLiteral("操作失败（%1）：%2")

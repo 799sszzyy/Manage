@@ -105,6 +105,32 @@ QJsonObject customerObject() {
     };
 }
 
+QJsonObject supplierObject() {
+    return {
+        {QStringLiteral("id"), 31},
+        {QStringLiteral("materialId"), 11},
+        {QStringLiteral("supplierName"), QStringLiteral("测试供应商")},
+        {QStringLiteral("contactName"), QStringLiteral("李四")},
+        {QStringLiteral("phone"), QStringLiteral("13900000000")},
+        {QStringLiteral("leadDays"), 7},
+        {QStringLiteral("isDefault"), false},
+        {QStringLiteral("isEnabled"), true},
+        {QStringLiteral("revision"), 3},
+    };
+}
+
+QJsonObject priceObject() {
+    return {
+        {QStringLiteral("id"), 41},
+        {QStringLiteral("supplierId"), 31},
+        {QStringLiteral("copperPriceCents"), QJsonValue::Null},
+        {QStringLiteral("unitPriceCents"), 1'100},
+        {QStringLiteral("isDefault"), false},
+        {QStringLiteral("isEnabled"), true},
+        {QStringLiteral("revision"), 1},
+    };
+}
+
 struct CatalogApi final {
     QHttpServer server;
     QTcpServer tcpServer;
@@ -115,16 +141,19 @@ struct CatalogApi final {
     int materialPuts{};
     int materialPatches{};
     int bundlePosts{};
+    int bundlePuts{};
     int customerPosts{};
     int customerPuts{};
     bool forbidMaterialList{};
     bool conflictNextMaterialPut{};
+    bool conflictNextBundlePut{};
     QUrlQuery lastMaterialQuery;
     QUrlQuery lastCustomerQuery;
     QJsonObject lastMaterialPost;
     QJsonObject lastMaterialPut;
     QJsonObject lastMaterialPatch;
     QJsonObject lastBundlePost;
+    QJsonObject lastBundlePut;
     QJsonObject lastCustomerPost;
     QJsonObject lastCustomerPut;
 
@@ -235,6 +264,55 @@ struct CatalogApi final {
                 auto response = materialObject();
                 response.insert(QStringLiteral("revision"), 1);
                 return QHttpServerResponse(response, StatusCode::Created);
+            }
+        );
+        // 三级向导整包替换（编辑模式）。
+        server.route(
+            QStringLiteral("/api/v1/materials/bundle"),
+            QHttpServerRequest::Method::Put,
+            [this](const QHttpServerRequest& request) {
+                ++bundlePuts;
+                lastBundlePut = requestObject(request);
+                if (conflictNextBundlePut) {
+                    conflictNextBundlePut = false;
+                    return QHttpServerResponse(
+                        QJsonObject{
+                            {QStringLiteral("error"), QStringLiteral("revision_conflict")},
+                            {QStringLiteral("message"), QStringLiteral("stale revision")},
+                        },
+                        StatusCode::Conflict
+                    );
+                }
+                auto response = materialObject();
+                response.insert(QStringLiteral("revision"), 8);
+                return QHttpServerResponse(response);
+            }
+        );
+        // 编辑向导：加载该物料现有供应商与价格作为起点。
+        server.route(
+            QStringLiteral("/api/v1/materials/<arg>/suppliers"),
+            QHttpServerRequest::Method::Get,
+            [this](qint64, const QHttpServerRequest&) {
+                return QHttpServerResponse(QJsonObject{
+                    {QStringLiteral("items"), QJsonArray{supplierObject()}},
+                    {QStringLiteral("page"), 1},
+                    {QStringLiteral("pageSize"), 20},
+                    {QStringLiteral("total"), 1},
+                    {QStringLiteral("totalPages"), 1},
+                });
+            }
+        );
+        server.route(
+            QStringLiteral("/api/v1/suppliers/<arg>/prices"),
+            QHttpServerRequest::Method::Get,
+            [this](qint64, const QHttpServerRequest&) {
+                return QHttpServerResponse(QJsonObject{
+                    {QStringLiteral("items"), QJsonArray{priceObject()}},
+                    {QStringLiteral("page"), 1},
+                    {QStringLiteral("pageSize"), 20},
+                    {QStringLiteral("total"), 1},
+                    {QStringLiteral("totalPages"), 1},
+                });
             }
         );
         server.route(
@@ -468,16 +546,47 @@ void adminCanSearchPageAndMutate(CatalogApi& api) {
     materials->selectRow(0);
     require(waitUntil([&]() { return materialEdit->isEnabled(); }), "material selection must enable edit");
     materialEdit->click();
+    // 编辑模式同样走三级向导：修改物料信息 → 确认 → 确定供应商 → 整包替换提交。
+    require(waitUntil([&]() { return child<QGroupBox>(widget, "materialBaseGroup")->isEnabled(); }),
+            "edit wizard must enable step one");
+    require(waitUntil([&]() {
+        return child<QTableWidget>(widget, "suppliersTable")->rowCount() == 1;
+    }), "edit wizard must load the existing supplier");
     child<QLineEdit>(widget, "materialPriceEdit")->setText(QStringLiteral("99.05"));
     child<QPushButton>(widget, "materialSaveButton")->click();
-    require(waitUntil([&]() { return api.materialPuts == 1; }), "material PUT missing");
+    require(waitUntil([&]() {
+        return !child<QGroupBox>(widget, "materialBaseGroup")->isEnabled() &&
+               child<QGroupBox>(widget, "supplierGroupBox")->isEnabled();
+    }), "edit wizard must lock step one and enable suppliers");
+    // 编辑模式预加载了现有供应商，直接确定进入价格。
+    child<QPushButton>(widget, "supplierConfirmButton")->click();
+    require(waitUntil([&]() {
+        return child<QComboBox>(widget, "priceSupplierCombo")->count() == 1;
+    }), "edit wizard must list the existing supplier");
+    child<QPushButton>(widget, "bundleCommitButton")->click();
+    require(waitUntil([&]() { return api.bundlePuts == 1; }), "bundle PUT missing");
     require(
-        api.lastMaterialPut.value(QStringLiteral("revision")).toInteger() == 7,
-        "material edit must carry the loaded revision"
+        api.lastBundlePut.value(QStringLiteral("materialId")).toInteger() == 11,
+        "bundle PUT must carry the material id"
     );
     require(
-        api.lastMaterialPut.value(QStringLiteral("currentUnitPriceCents")).toInteger() == 9'905,
-        "edited yuan input must be converted to cents"
+        api.lastBundlePut.value(QStringLiteral("materialRevision")).toInteger() == 7,
+        "bundle PUT must carry the loaded revision"
+    );
+    require(
+        api.lastBundlePut.value(QStringLiteral("material"))
+            .toObject()
+            .value(QStringLiteral("currentUnitPriceCents"))
+            .toInteger() == 9'905,
+        "edited yuan input must be converted to cents in bundle"
+    );
+    const auto editSuppliers =
+        api.lastBundlePut.value(QStringLiteral("suppliers")).toArray();
+    require(editSuppliers.size() == 1, "bundle PUT keeps the existing supplier");
+    require(
+        editSuppliers.at(0).toObject().value(QStringLiteral("supplier"))
+                .toObject().value(QStringLiteral("id")).toInteger() == 31,
+        "bundle PUT keeps supplier identity for optimistic lock"
     );
 
     require(waitUntil([&]() { return child<QPushButton>(widget, "materialsRefreshButton")->isEnabled(); }),
@@ -615,11 +724,24 @@ void errorsAreShownInChinese(CatalogApi& api) {
     require(waitUntil([&]() { return editButton->isEnabled(); }),
             "material selection must enable conflict edit");
     editButton->click();
-    api.conflictNextMaterialPut = true;
-    const auto putsBeforeConflict = api.materialPuts;
+    // 编辑向导：等待现有供应商加载完成（异步）后进入第 1 步确认。
+    require(waitUntil([&]() {
+        return child<QTableWidget>(widget, "suppliersTable")->rowCount() == 1;
+    }), "edit wizard must load the existing supplier");
     child<QPushButton>(widget, "materialSaveButton")->click();
-    require(waitUntil([&]() { return api.materialPuts > putsBeforeConflict; }),
-            "conflict PUT missing");
+    require(waitUntil([&]() {
+        return !child<QGroupBox>(widget, "materialBaseGroup")->isEnabled() &&
+               child<QGroupBox>(widget, "supplierGroupBox")->isEnabled();
+    }), "conflict wizard must advance to suppliers");
+    api.conflictNextBundlePut = true;
+    const auto putsBeforeConflict = api.bundlePuts;
+    child<QPushButton>(widget, "supplierConfirmButton")->click();
+    require(waitUntil([&]() {
+        return child<QPushButton>(widget, "bundleCommitButton")->isEnabled();
+    }), "conflict wizard must advance to price step");
+    child<QPushButton>(widget, "bundleCommitButton")->click();
+    require(waitUntil([&]() { return api.bundlePuts > putsBeforeConflict; }),
+            "conflict bundle PUT missing");
     require(
         waitUntil([&]() {
             return child<QLabel>(widget, "materialsStatusLabel")

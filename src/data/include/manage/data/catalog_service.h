@@ -19,6 +19,12 @@ public:
     CatalogResult<MaterialBundleResult> createMaterialBundle(
         MaterialBundleDraft bundle
     ) const;
+    // 编辑模式：整包替换（乐观锁），事务原子更新物料 + 供应商 + 价格。
+    CatalogResult<MaterialBundleResult> replaceMaterialBundle(
+        std::int64_t materialId,
+        std::uint32_t expectedRevision,
+        MaterialBundleDraft bundle
+    ) const;
     CatalogResult<Material> updateMaterial(
         std::int64_t id,
         std::uint32_t expectedRevision,

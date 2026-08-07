@@ -634,6 +634,66 @@ void registerCatalogRoutes(
                        : errorResponse(*result.error);
         }
     );
+    // 物料库三级向导整包替换（编辑模式）：事务原子更新物料 + 供应商 + 价格。
+    server.route(
+        QStringLiteral("/api/v1/materials/bundle"),
+        QHttpServerRequest::Method::Put,
+        [service, authService](const QHttpServerRequest& request) {
+            if (auto failure = HttpAuthorization::require(
+                    request,
+                    authService,
+                    {manage::auth::UserRole::Admin}
+                )) {
+                return std::move(*failure);
+            }
+            if (service == nullptr) {
+                return invalidJsonResponse(
+                    QStringLiteral("catalog service is unavailable")
+                );
+            }
+            QHttpServerResponse failure(StatusCode::BadRequest);
+            const auto object = requestObject(request, &failure);
+            if (!object.has_value()) {
+                return failure;
+            }
+            qint64 materialId = 0;
+            qint64 materialRevisionValue = 0;
+            if (!readInteger(*object, QStringLiteral("materialId"), &materialId, true)
+                || !readInteger(
+                    *object,
+                    QStringLiteral("materialRevision"),
+                    &materialRevisionValue,
+                    true
+                )) {
+                return invalidJsonResponse(
+                    QStringLiteral("bundle requires materialId and materialRevision")
+                );
+            }
+            if (materialId <= 0) {
+                return invalidJsonResponse(
+                    QStringLiteral("materialId must be a positive integer")
+                );
+            }
+            if (materialRevisionValue <= 0 ||
+                materialRevisionValue > std::numeric_limits<std::uint32_t>::max()) {
+                return invalidJsonResponse(
+                    QStringLiteral("materialRevision must be a positive 32-bit integer")
+                );
+            }
+            const auto bundle = materialBundleDraft(*object, &failure);
+            if (!bundle.has_value()) {
+                return failure;
+            }
+            const auto result = service->replaceMaterialBundle(
+                materialId,
+                static_cast<std::uint32_t>(materialRevisionValue),
+                *bundle
+            );
+            return result.ok()
+                       ? QHttpServerResponse(bundleJson(*result.value))
+                       : errorResponse(*result.error);
+        }
+    );
     server.route(
         QStringLiteral("/api/v1/materials/<arg>"),
         QHttpServerRequest::Method::Put,

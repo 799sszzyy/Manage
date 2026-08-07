@@ -301,6 +301,53 @@ CatalogResult<MaterialBundleResult> CatalogService::createMaterialBundle(
     return succeeded(std::move(result));
 }
 
+CatalogResult<MaterialBundleResult> CatalogService::replaceMaterialBundle(
+    std::int64_t materialId,
+    std::uint32_t expectedRevision,
+    MaterialBundleDraft bundle
+) const {
+    if (materialId <= 0) {
+        return failed<MaterialBundleResult>(validationError(
+            QStringLiteral("id"),
+            QStringLiteral("id must be a positive integer")
+        ));
+    }
+    if (expectedRevision == 0) {
+        return failed<MaterialBundleResult>(validationError(
+            QStringLiteral("revision"),
+            QStringLiteral("revision must be a positive integer")
+        ));
+    }
+    if (const auto error = validateMaterial(&bundle.material); error.has_value()) {
+        return failed<MaterialBundleResult>(*error);
+    }
+    for (auto& entry : bundle.suppliers) {
+        if (const auto error = validateMaterialSupplier(&entry.supplier);
+            error.has_value()) {
+            return failed<MaterialBundleResult>(*error);
+        }
+        for (auto& price : entry.prices) {
+            if (const auto error = validateMaterialPrice(&price);
+                error.has_value()) {
+                return failed<MaterialBundleResult>(*error);
+            }
+        }
+    }
+
+    MaterialBundleResult result;
+    RepositoryError repositoryError;
+    if (!repository_->replaceMaterialBundle(
+            materialId,
+            expectedRevision,
+            bundle,
+            &result,
+            &repositoryError
+        )) {
+        return failed<MaterialBundleResult>(mapRepositoryError(repositoryError));
+    }
+    return succeeded(std::move(result));
+}
+
 CatalogResult<Material> CatalogService::updateMaterial(
     std::int64_t id,
     std::uint32_t expectedRevision,

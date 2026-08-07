@@ -560,6 +560,84 @@ public:
         return true;
     }
 
+    // 整包替换（编辑模式）：乐观锁更新物料，清空原供应商与价格，再写入 bundle。
+    bool replaceMaterialBundle(
+        std::int64_t materialId,
+        std::uint32_t expectedRevision,
+        const manage::data::MaterialBundleDraft& bundle,
+        manage::data::MaterialBundleResult* result,
+        manage::data::RepositoryError* error
+    ) override {
+        clear(error);
+        if (result == nullptr) {
+            fail(error, manage::data::RepositoryErrorCode::Database, QStringLiteral("result required"));
+            return false;
+        }
+        // 1. 乐观锁更新物料
+        const auto materialFound = std::find_if(
+            materials.begin(), materials.end(),
+            [materialId](const auto& item) { return item.id == materialId; }
+        );
+        if (materialFound == materials.end()) {
+            fail(error, manage::data::RepositoryErrorCode::NotFound, QStringLiteral("material not found"));
+            return false;
+        }
+        if (materialFound->revision != expectedRevision) {
+            fail(error, manage::data::RepositoryErrorCode::RevisionConflict, QStringLiteral("conflict"));
+            return false;
+        }
+        apply(bundle.material, &*materialFound);
+        ++materialFound->revision;
+        materialFound->updatedAt = QDateTime::currentDateTimeUtc();
+        result->material = *materialFound;
+
+        // 2. 移除该物料下原供应商与价格
+        // 先在删除前收集供应商 id，用于筛选其下价格。
+        std::vector<std::int64_t> removedSupplierIds;
+        for (const auto& item : suppliers) {
+            if (item.materialId == materialId) {
+                removedSupplierIds.push_back(item.id);
+            }
+        }
+        suppliers.erase(
+            std::remove_if(suppliers.begin(), suppliers.end(),
+                [materialId](const auto& item) { return item.materialId == materialId; }),
+            suppliers.end()
+        );
+        if (!removedSupplierIds.empty()) {
+            prices.erase(
+                std::remove_if(prices.begin(), prices.end(),
+                    [&removedSupplierIds](const auto& item) {
+                        return std::find(
+                                   removedSupplierIds.begin(),
+                                   removedSupplierIds.end(),
+                                   item.supplierId
+                               ) != removedSupplierIds.end();
+                    }),
+                prices.end()
+            );
+        }
+
+        // 3. 写入 bundle 中的供应商和价格
+        result->suppliers.reserve(bundle.suppliers.size());
+        for (const auto& entry : bundle.suppliers) {
+            manage::data::MaterialSupplier supplier;
+            if (!createMaterialSupplier(
+                    materialId, entry.supplier, &supplier, error)) {
+                return false;
+            }
+            result->suppliers.push_back(supplier);
+            for (const auto& priceDraft : entry.prices) {
+                manage::data::MaterialPrice price;
+                if (!createMaterialPrice(supplier.id, priceDraft, &price, error)) {
+                    return false;
+                }
+                result->prices.push_back(price);
+            }
+        }
+        return true;
+    }
+
 private:
     static void clear(manage::data::RepositoryError* error) {
         if (error != nullptr) {

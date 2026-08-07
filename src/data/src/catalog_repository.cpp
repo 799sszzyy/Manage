@@ -1043,4 +1043,181 @@ bool MySqlCatalogRepository::createMaterialBundle(
     return true;
 }
 
+// 整包替换（编辑模式）：乐观锁更新物料，删除其下全部供应商与价格后重新写入。
+// 迁移 004 已通过 ON DELETE CASCADE 让 material_supplier_prices 跟随 suppliers 级联删除。
+bool MySqlCatalogRepository::replaceMaterialBundle(
+    std::int64_t materialId,
+    std::uint32_t expectedRevision,
+    const MaterialBundleDraft& bundle,
+    MaterialBundleResult* result,
+    RepositoryError* error
+) {
+    clearError(error);
+    if (result == nullptr) {
+        setError(
+            error,
+            RepositoryErrorCode::Database,
+            QStringLiteral("result buffer is required")
+        );
+        return false;
+    }
+    if (!database_.transaction()) {
+        setError(
+            error,
+            RepositoryErrorCode::Database,
+            QStringLiteral("unable to begin transaction: %1")
+                .arg(database_.lastError().text())
+        );
+        return false;
+    }
+
+    const auto rollback = [this, error]() {
+        database_.rollback();
+        if (error->code == RepositoryErrorCode::None) {
+            setError(
+                error,
+                RepositoryErrorCode::Database,
+                QStringLiteral("transaction rolled back")
+            );
+        }
+    };
+
+    // 1. 乐观锁更新物料
+    {
+        QSqlQuery query(database_);
+        query.prepare(QStringLiteral(
+            "UPDATE materials SET code = :code, name = :name, "
+            "specification = :specification, unit = :unit, category = :category, "
+            "is_copper_based = :isCopperBased, "
+            "current_unit_price_cents = :currentUnitPriceCents, "
+            "is_enabled = :isEnabled, revision = revision + 1 "
+            "WHERE id = :id AND revision = :revision"
+        ));
+        bindMaterialDraft(&query, bundle.material);
+        query.bindValue(QStringLiteral(":id"), QVariant::fromValue<qlonglong>(materialId));
+        query.bindValue(QStringLiteral(":revision"), expectedRevision);
+        if (!query.exec()) {
+            setError(error, sqlErrorCode(query.lastError()), query.lastError().text());
+            rollback();
+            return false;
+        }
+        if (query.numRowsAffected() == 0) {
+            bool exists = false;
+            if (!recordExists(QStringLiteral("materials"), materialId, &exists, error)) {
+                rollback();
+                return false;
+            }
+            setError(
+                error,
+                exists ? RepositoryErrorCode::RevisionConflict
+                       : RepositoryErrorCode::NotFound,
+                exists ? QStringLiteral("material revision conflict")
+                       : QStringLiteral("material not found")
+            );
+            rollback();
+            return false;
+        }
+        if (!findMaterial(materialId, &result->material, error)) {
+            rollback();
+            return false;
+        }
+    }
+
+    // 2. 删除该物料下全部供应商：material_supplier_prices 跟随级联删除。
+    {
+        QSqlQuery query(database_);
+        query.prepare(QStringLiteral(
+            "DELETE FROM material_suppliers WHERE material_id = :materialId"
+        ));
+        query.bindValue(
+            QStringLiteral(":materialId"),
+            QVariant::fromValue<qlonglong>(materialId)
+        );
+        if (!query.exec()) {
+            setError(
+                error,
+                sqlErrorCode(query.lastError()),
+                query.lastError().text()
+            );
+            rollback();
+            return false;
+        }
+    }
+
+    // 3. 写入新供应商和价格（与 createMaterialBundle 逻辑一致）。
+    result->suppliers.reserve(bundle.suppliers.size());
+    for (const auto& entry : bundle.suppliers) {
+        QSqlQuery supplierQuery(database_);
+        supplierQuery.prepare(QStringLiteral(
+            "INSERT INTO material_suppliers "
+            "(material_id, supplier_name, contact_name, phone, is_default, is_enabled, lead_days) "
+            "VALUES (:materialId, :supplierName, :contactName, :phone, :isDefault, :isEnabled, :leadDays)"
+        ));
+        supplierQuery.bindValue(
+            QStringLiteral(":materialId"),
+            QVariant::fromValue<qlonglong>(materialId)
+        );
+        bindMaterialSupplierDraft(&supplierQuery, entry.supplier);
+        if (!supplierQuery.exec()) {
+            setError(
+                error,
+                sqlErrorCode(supplierQuery.lastError()),
+                supplierQuery.lastError().text()
+            );
+            rollback();
+            return false;
+        }
+        const auto supplierId = supplierQuery.lastInsertId().toLongLong();
+        MaterialSupplier supplier;
+        if (!findMaterialSupplier(supplierId, &supplier, error)) {
+            rollback();
+            return false;
+        }
+        result->suppliers.push_back(supplier);
+
+        for (const auto& priceDraft : entry.prices) {
+            QSqlQuery priceQuery(database_);
+            priceQuery.prepare(QStringLiteral(
+                "INSERT INTO material_supplier_prices "
+                "(material_supplier_id, copper_price_cents, unit_price_cents, "
+                "is_default, is_enabled) "
+                "VALUES (:supplierId, :copperPriceCents, :unitPriceCents, "
+                ":isDefault, :isEnabled)"
+            ));
+            priceQuery.bindValue(
+                QStringLiteral(":supplierId"),
+                QVariant::fromValue<qlonglong>(supplierId)
+            );
+            bindMaterialPriceDraft(&priceQuery, priceDraft);
+            if (!priceQuery.exec()) {
+                setError(
+                    error,
+                    sqlErrorCode(priceQuery.lastError()),
+                    priceQuery.lastError().text()
+                );
+                rollback();
+                return false;
+            }
+            MaterialPrice price;
+            if (!findMaterialPrice(priceQuery.lastInsertId().toLongLong(), &price, error)) {
+                rollback();
+                return false;
+            }
+            result->prices.push_back(price);
+        }
+    }
+
+    if (!database_.commit()) {
+        setError(
+            error,
+            RepositoryErrorCode::Database,
+            QStringLiteral("unable to commit bundle: %1")
+                .arg(database_.lastError().text())
+        );
+        database_.rollback();
+        return false;
+    }
+    return true;
+}
+
 } // namespace manage::data
