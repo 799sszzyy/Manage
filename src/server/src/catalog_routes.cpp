@@ -481,9 +481,15 @@ std::optional<manage::data::MaterialBundleDraft> materialBundleDraft(
             return std::nullopt;
         }
         const auto supplierObject = value.toObject();
+        // 桌面端发送的供应商条目结构为 { "supplier": {字段...}, "prices": [...] }，
+        // 供应商字段在 supplier 子对象内；此处解包后交给字段校验。
+        const auto supplierFields =
+            supplierObject.value(QStringLiteral("supplier"));
+        const auto supplierForValidation =
+            supplierFields.isObject() ? supplierFields.toObject() : supplierObject;
         manage::data::MaterialBundleSupplierDraft entry;
         const auto parsedSupplier =
-            materialSupplierDraft(supplierObject, failure);
+            materialSupplierDraft(supplierForValidation, failure);
         if (!parsedSupplier.has_value()) {
             return std::nullopt;
         }

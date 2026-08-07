@@ -199,6 +199,73 @@ void runCatalogRouteScenario(
         port, QStringLiteral("/api/v1/customers/999"), bearerToken
     )));
     require(missing.status == 404, "missing customer must return HTTP 404");
+
+    // 物料库三级向导整包创建：供应商条目使用 { "supplier": {...}, "prices": [...] } 结构。
+    const QJsonObject bundlePayload{
+        {QStringLiteral("material"),
+         QJsonObject{
+             {QStringLiteral("code"), QStringLiteral("MAT-BUNDLE-001")},
+             {QStringLiteral("name"), QStringLiteral("Bundle material")},
+             {QStringLiteral("unit"), QStringLiteral("meter")},
+             {QStringLiteral("currentUnitPriceCents"), 12'000},
+         }},
+        {QStringLiteral("suppliers"),
+         QJsonArray{
+             QJsonObject{
+                 {QStringLiteral("supplier"),
+                  QJsonObject{
+                      {QStringLiteral("supplierName"), QStringLiteral("Bundle Supplier")},
+                      {QStringLiteral("contactName"), QStringLiteral("Contact")},
+                      {QStringLiteral("phone"), QStringLiteral("123456")},
+                      {QStringLiteral("leadDays"), 7},
+                      {QStringLiteral("isDefault"), true},
+                      {QStringLiteral("isEnabled"), true},
+                  }},
+                 {QStringLiteral("prices"),
+                  QJsonArray{
+                      QJsonObject{
+                          {QStringLiteral("unitPriceCents"), 12'000},
+                          {QStringLiteral("isDefault"), true},
+                          {QStringLiteral("isEnabled"), true},
+                      },
+                  }},
+             },
+         }},
+    };
+    const auto bundleCreated = sendJson(
+        network, port, QByteArrayLiteral("POST"),
+        QStringLiteral("/api/v1/materials/bundle"), bundlePayload, bearerToken
+    );
+    require(bundleCreated.status == 201,
+            "bundle create must accept nested supplier object (HTTP 201)");
+    const auto bundleObject = QJsonDocument::fromJson(bundleCreated.body).object();
+    require(bundleObject.value(QStringLiteral("material")).isObject(),
+            "bundle response carries material");
+    const auto bundleSupplierArray =
+        bundleObject.value(QStringLiteral("suppliers")).toArray();
+    require(bundleSupplierArray.size() == 1, "bundle response carries supplier");
+    require(
+        bundleSupplierArray.at(0).toObject()
+            .value(QStringLiteral("supplierName")).toString() ==
+            QStringLiteral("Bundle Supplier"),
+        "bundle response carries supplier name"
+    );
+
+    // 缺 supplier 子对象时应被拒绝（防止扁平结构误入）。
+    QJsonObject malformedBundle = bundlePayload;
+    QJsonArray malformedSuppliers{
+        QJsonObject{
+            {QStringLiteral("supplierName"), QStringLiteral("Flat Supplier")},
+            {QStringLiteral("prices"), QJsonArray{}},
+        },
+    };
+    malformedBundle.insert(QStringLiteral("suppliers"), malformedSuppliers);
+    const auto bundleRejected = sendJson(
+        network, port, QByteArrayLiteral("POST"),
+        QStringLiteral("/api/v1/materials/bundle"), malformedBundle, bearerToken
+    );
+    require(bundleRejected.status == 400,
+            "bundle create must reject flat supplier objects (HTTP 400)");
 }
 
 QString responseError(const NetworkResponse& response) {
