@@ -482,8 +482,7 @@ void MainWindow::handleLoginResponse(ApiResponse response) {
     authenticationMessageLabel_->clear();
     const auto mustChangePassword = apiClient_->session()
                                         .user
-                                        .value(QStringLiteral("mustChangePassword"))
-                                        .toBool(false);
+                                        .value(QStringLiteral("mustChangePassword"), false).toBool();
     if (mustChangePassword) {
         showPasswordChangePage();
         return;

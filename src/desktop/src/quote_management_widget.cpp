@@ -417,7 +417,7 @@ void QuoteManagementWidget::applySessionState() {
     if (apiClient_ && apiClient_->isAuthenticated()) {
         const auto user = apiClient_->session().user;
         role_ = user.value(QStringLiteral("role")).toString();
-        mustChangePassword_ = user.value(QStringLiteral("mustChangePassword")).toBool(true);
+        mustChangePassword_ = user.value(QStringLiteral("mustChangePassword"), true).toBool();
     }
     if (!sessionReady()) {
         quotes_ = {};
@@ -1090,8 +1090,7 @@ void QuoteManagementWidget::resolveRowPrice(int row) {
                 return;
             }
             const auto hasSuppliers = response.body
-                                          .value(QStringLiteral("hasSuppliers"))
-                                          .toBool(false);
+                                          .value(QStringLiteral("hasSuppliers"), false).toBool();
             auto* combo = qobject_cast<QComboBox*>(
                 self->itemsTable_->cellWidget(row, 6)
             );

@@ -39,7 +39,7 @@ manage::data::Material materialFromJson(const QJsonObject& object) {
     material.unit = object.value(QStringLiteral("unit")).toString();
     material.category = object.value(QStringLiteral("category")).toString();
     material.currentUnitPriceCents = object.value(QStringLiteral("currentUnitPriceCents")).toInteger();
-    material.isEnabled = object.value(QStringLiteral("isEnabled")).toBool(true);
+    material.isEnabled = object.value(QStringLiteral("isEnabled"), true).toBool();
     return material;
 }
 
@@ -49,7 +49,7 @@ manage::data::BomTemplate bomFromJson(const QJsonObject& object) {
     bom.summary.code = object.value(QStringLiteral("code")).toString();
     bom.summary.name = object.value(QStringLiteral("name")).toString();
     bom.summary.description = object.value(QStringLiteral("description")).toString();
-    bom.summary.isEnabled = object.value(QStringLiteral("isEnabled")).toBool(true);
+    bom.summary.isEnabled = object.value(QStringLiteral("isEnabled"), true).toBool();
     bom.summary.revision = object.value(QStringLiteral("revision")).toInt(1);
     for (const auto& value : object.value(QStringLiteral("items")).toArray()) {
         const auto itemObject = value.toObject();

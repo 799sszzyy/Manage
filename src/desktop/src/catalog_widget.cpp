@@ -732,8 +732,7 @@ void CatalogWidget::applySessionState() {
         apiClient_ && apiClient_->isAuthenticated() &&
         apiClient_->session()
             .user
-            .value(QStringLiteral("mustChangePassword"))
-            .toBool(true);
+            .value(QStringLiteral("mustChangePassword"), true).toBool();
     const auto materialMessage = mustChangePassword
                                      ? QStringLiteral("请先修改临时密码，再查看物料。")
                                      : QStringLiteral("请先登录后查看物料。");
@@ -752,8 +751,7 @@ bool CatalogWidget::sessionReady() const {
     return apiClient_ && apiClient_->isAuthenticated() &&
            !apiClient_->session()
                 .user
-                .value(QStringLiteral("mustChangePassword"))
-                .toBool(true);
+                .value(QStringLiteral("mustChangePassword"), true).toBool();
 }
 
 bool CatalogWidget::canWrite() const {

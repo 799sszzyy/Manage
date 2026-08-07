@@ -629,8 +629,8 @@ void BomQuoteWidget::refreshMaterials() {
                          material.value(QStringLiteral("name")).toString());
                 const auto id = material.value(QStringLiteral("id")).toInteger();
                 const auto isCopperBased = material
-                                               .value(QStringLiteral("isCopperBased"))
-                                               .toBool(false);
+                                               .value(QStringLiteral("isCopperBased"), false)
+                                               .toBool();
                 self->bomMaterialCombo_->addItem(label, id);
                 self->bomMaterialCombo_->setItemData(
                     self->bomMaterialCombo_->count() - 1,
@@ -698,7 +698,7 @@ void BomQuoteWidget::loadBom(qint64 id) {
 void BomQuoteWidget::applyBom(const QJsonObject& object) {
     currentBomId_ = object.value(QStringLiteral("id")).toInteger();
     currentBomRevision_ = object.value(QStringLiteral("revision")).toInt();
-    currentBomEnabled_ = object.value(QStringLiteral("isEnabled")).toBool(true);
+    currentBomEnabled_ = object.value(QStringLiteral("isEnabled"), true).toBool();
     bomCodeEdit_->setText(object.value(QStringLiteral("code")).toString());
     bomNameEdit_->setText(object.value(QStringLiteral("name")).toString());
     bomDescriptionEdit_->setText(
@@ -978,7 +978,7 @@ void BomQuoteWidget::addBomItem() {
     }
     const auto materialId = bomMaterialCombo_->currentData().toLongLong();
     const auto isCopperBased = bomMaterialCombo_->currentData(kCopperBasedRole)
-                                   .toBool(false);
+                                   .toBool();
     const auto parts = bomMaterialCombo_->currentText().split(QStringLiteral(" — "));
     if (!bomItemsTable_->addOrMergeMaterial(
             materialId, parts.value(0), parts.value(1), 1'000'000, isCopperBased
@@ -1226,8 +1226,8 @@ void BomQuoteWidget::resolveRowPrice(int row) {
                 return;
             }
             const auto hasSuppliers = response.body
-                                          .value(QStringLiteral("hasSuppliers"))
-                                          .toBool(false);
+                                          .value(QStringLiteral("hasSuppliers"), false)
+                                          .toBool();
             if (self->bomItemsTable_->rowSupplierId(row) == 0 && hasSuppliers) {
                 // 有供应商价格的物料尚未选择供应商：保留当前显示值，
                 // 由用户选择供应商后重新解析。

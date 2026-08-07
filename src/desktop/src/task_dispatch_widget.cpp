@@ -197,8 +197,7 @@ void TaskDispatchWidget::applySessionState() {
         userId_ = session.user.value(QStringLiteral("id")).toVariant().toLongLong();
         role_ = session.user.value(QStringLiteral("role")).toString();
         mustChangePassword_ = session.user
-            .value(QStringLiteral("mustChangePassword"))
-            .toBool(false);
+            .value(QStringLiteral("mustChangePassword"), false).toBool();
     } else {
         userId_ = 0;
         role_.clear();
